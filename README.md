@@ -31,7 +31,7 @@ cars, airplanes
 construction work
 church bells
 
-The dataset contains a total of 6h 22m of audio, of which 2h52m bird audio and 2h28m noise, and is subdivided further as 84% trainign and 16% testing. 
+The dataset contains a total of 6h 22m of audio, of which 2h52m bird audio and 2h28m noise, and is subdivided further as 84% training and 16% testing. 
 Audio is formatted 16khz, 16 bits mono raw. 
 Audio was gathered using as hardware a Raspberry PI attached with a Rode AI-micro audio interface and a Clippy EM272Z1 Mono Microphone and as software BirdNet-PI in parallel with a custom script that collects environmental audio when no bird detections are occurring an an amplitude threshold is crossed. 
 Bird audio was further screened using Birdnet Analyser, purging all 3s chunks with confidence < 0.9. 
