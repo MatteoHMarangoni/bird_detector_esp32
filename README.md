@@ -1,13 +1,49 @@
 # Bird Detector ESP32
 
-This repo is used to infer bird recordings localy on an S3 Pro 
+This repo provides a bird detector running localy on an ESP32 S3 Pro MCU. 
+It is based on a audio classifier trained with Edge Impulse on a custom dataset of bird and environmental audio. 
+It runs the classifier and provides detections over a dataset loaded on an SD card. 
 
 Update 16/09/2025 
 
-- The code was edited and cleaned up by Stephan to use it to run inference on an ESP32 Lolin S3 Pro, using files on an sd card inserted into the microcontroller
+The dataset was collected in the garden of the Museum Marres in Maastricht in July 2025 and containes the following. 
 
-- older models didn't seem to run correctly, always having a very low accuracy. 
-Thus, Stephan made a new Edge Impulse Model with the following settings:
+Bird category:
+
+Blackbird
+Blackcap
+Chaffinch
+Magpie
+Pigeon / Dove
+Robin
+Swift
+Dunnock
+Grey Spotted Woodpecker
+Green Woodpecker
+
+Noise category includes:
+
+people talking, dinner, large gathering, public speech
+children playing in school yard
+music event
+rain, wind
+cars, airplanes
+construction work
+church bells
+
+The dataset contains a total of 6h 22m of audio, of which 2h52m bird audio and 2h28m noise, and is subdivided further as 84% trainign and 16% testing. 
+Audio is formatted 16khz, 16 bits mono raw. 
+Audio was gathered using as hardware a Raspberry PI attached with a Rode AI-micro audio interface and a Clippy EM272Z1 Mono Microphone and as software BirdNet-PI in parallel with a custom script that collects environmental audio when no bird detections are occurring an an amplitude threshold is crossed. 
+Bird audio was further screened using Birdnet Analyser, purging all 3s chunks with confidence < 0.9. 
+Noise audio was also screened using Birdnet Analyser, purging chunks with confidence > 0.1. 
+
+The classifier is based on MFCC (see below for parameters)
+Edge Impulse rates the classifier at 87% accuracy, with estimated 8 ms inference time 12.5k peak ram usage, 45.7k flash usage, when running the 8 bit quantized model with the EON compiler on an ESP32. 
+
+Accuracy was confirmed when running the model on the MCU over the entire testing set, however latency was an order of magnitude higher.
+
+
+Training settings for the classifer on Edge Impulse: 
 
 Create impulse:
 Windows Size: 1000ms
@@ -19,7 +55,7 @@ Audio MFCC block
 Classification block
 Output features 2 (bird, noise)
 
-For the MFCC tab parameters I used the autotune parameters button and ran it with the following:
+For the MFCC tab parameters: 
 Number of coefficients: 13
 Frame length: 0.02
 Frame stride: 0.02
@@ -39,30 +75,26 @@ Advanced training settings; None set
 Data augmentation: off
 
 
-- Running this model on the validation data of the training set (1770 bird  samples of 1 sec and 1770 no_bird samples of 1 sec) gave the following results:
-===== FINAL STATISTICS =====
+- Running this model on the MCU on the entire testing set loaded on an SD card (1770 bird  samples of 1 sec and 1770 no_bird samples of 1 sec) gave the following results:
+
 Bird samples: 1770, correctly identified: 1583 (89.44%)
 No-bird samples: 1770, correctly identified: 1514 (85.54%)
 Overall accuracy: 87.49% (3097 of 3540 correct)
 Inference timing - Avg: 0.047 s, Min: 0.047 s, Max: 0.051 s
 Loading timing - Avg: 0.253 s, Min: 0.159 s, Max: 5.210 s
 
-- Niels also added an .rtf file with the output of the serial monitor, this is not the entire thing, as he was not aware the memory would run out after a 1000 lines 
-
-- Niels is working on documenting how to use the model 
 
 HOW TO USE:
 
-- download the correct edge impulse model
+Note that the dataset was removed from this public repo for privacy reasons (as it contains fragments of speech recorded in public space), to use you need to add your own data. 
 
-- put the folder with the correct model in the /lib folder 
+- Create the following two folders in the root of an SD card:
+/bird
+/no_bird
 
-- copy your bird recordings into the /sdcard/bird folder
-(it is important that your recordings are seperated into 1 sec, mono, 16bit, 16khz raw segments)
+Format data to 1 sec samples, mono, 16bit, 16khz raw .wav
 
-- copy your noise/non-bird recordings into the sdcard/no_bird folder
-
-- copy the both folders into an empty sd card
+- copy your data into the two folders
 
 - insert sd card in your microcontroller's micro sd slot (Lolin S3 Pro) 
 (contacts facing down!)
@@ -70,6 +102,8 @@ HOW TO USE:
 - build the main sketch
 
 - upload the main sketch
+
+- set terminal baud rate to 115200
 
 - watch terminal output for accuracy 
 
