@@ -1,4 +1,4 @@
-# Bird detector ESP32
+# TinyChirp port
 
 This repo is used to infer bird recordings localy on an S3 Pro 
 
