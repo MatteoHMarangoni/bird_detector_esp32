@@ -122,7 +122,7 @@ EI_IMPULSE_ERROR fill_input_tensor_from_matrix(
 }
 
 EI_IMPULSE_ERROR fill_input_tensor_from_signal(
-    signal_t *signal,
+    signal_t_ei *signal,
     TfLiteTensor *input
 ) {
     switch (input->type) {

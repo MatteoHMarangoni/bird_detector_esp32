@@ -45,13 +45,13 @@ using namespace ei;
 
 class SignalWithAxes {
 public:
-    SignalWithAxes(signal_t *original_signal, EI_CLASSIFIER_DSP_AXES_INDEX_TYPE *axes, size_t axes_count, const ei_impulse_t *impulse):
+    SignalWithAxes(signal_t_ei *original_signal, EI_CLASSIFIER_DSP_AXES_INDEX_TYPE *axes, size_t axes_count, const ei_impulse_t *impulse):
         _original_signal(original_signal), _axes(axes), _axes_count(axes_count), _impulse(impulse)
     {
 
     }
 
-    signal_t * get_signal() {
+    signal_t_ei * get_signal() {
         if (this->_axes_count == _impulse->raw_samples_per_frame) {
             return this->_original_signal;
         }
@@ -86,11 +86,11 @@ public:
     }
 
 private:
-    signal_t *_original_signal;
+    signal_t_ei *_original_signal;
     EI_CLASSIFIER_DSP_AXES_INDEX_TYPE *_axes;
     size_t _axes_count;
     const ei_impulse_t *_impulse;
-    signal_t wrapped_signal;
+    signal_t_ei wrapped_signal;
 };
 
 #endif // #if !EIDSP_SIGNAL_C_FN_POINTER

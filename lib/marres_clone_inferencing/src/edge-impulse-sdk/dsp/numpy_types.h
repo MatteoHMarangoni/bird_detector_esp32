@@ -699,7 +699,7 @@ typedef struct ei_signal_t {
      *  preprocessing and inference.
     */
     size_t total_length;
-} signal_t;
+} signal_t_ei;
 
 /** @} */
 

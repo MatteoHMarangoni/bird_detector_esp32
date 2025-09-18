@@ -97,7 +97,7 @@ namespace {
 
 /* Function prototypes ----------------------------------------------------- */
 extern "C" EI_IMPULSE_ERROR run_inference(ei_impulse_handle_t *handle, ei_feature_t *fmatrix, ei_impulse_result_t *result, bool debug);
-extern "C" EI_IMPULSE_ERROR run_classifier_image_quantized(const ei_impulse_t *impulse, signal_t *signal, ei_impulse_result_t *result, bool debug);
+extern "C" EI_IMPULSE_ERROR run_classifier_image_quantized(const ei_impulse_t *impulse, signal_t_ei *signal, ei_impulse_result_t *result, bool debug);
 static EI_IMPULSE_ERROR can_run_classifier_image_quantized(const ei_impulse_t *impulse, ei_learning_block_t block_ptr);
 
 #if EI_CLASSIFIER_LOAD_IMAGE_SCALING
@@ -248,7 +248,7 @@ extern "C" EI_IMPULSE_ERROR run_inference(
  * @return     The ei impulse error.
  */
 extern "C" EI_IMPULSE_ERROR process_impulse(ei_impulse_handle_t *handle,
-                                            signal_t *signal,
+                                            signal_t_ei *signal,
                                             ei_impulse_result_t *result,
                                             bool debug = false)
 {
@@ -455,7 +455,7 @@ extern "C" EI_IMPULSE_ERROR init_impulse(ei_impulse_handle_t *handle) {
  * @return     The ei impulse error.
  */
 extern "C" EI_IMPULSE_ERROR process_impulse_continuous(ei_impulse_handle_t *handle,
-                                            signal_t *signal,
+                                            signal_t_ei *signal,
                                             ei_impulse_result_t *result,
                                             bool debug = false)
 {
@@ -493,7 +493,7 @@ extern "C" EI_IMPULSE_ERROR process_impulse_continuous(ei_impulse_handle_t *hand
         ei::matrix_t fm(1, block.n_output_features,
                         static_features_matrix.buffer + out_features_index);
 
-        int (*extract_fn_slice)(ei::signal_t *signal, ei::matrix_t *output_matrix, void *config, const float frequency, matrix_size_t *out_matrix_size);
+        int (*extract_fn_slice)(ei::signal_t_ei *signal, ei::matrix_t *output_matrix, void *config, const float frequency, matrix_size_t *out_matrix_size);
 
         /* Switch to the slice version of the mfcc feature extract function */
         if (block.extract_fn == extract_mfcc_features) {
@@ -671,7 +671,7 @@ __attribute__((unused)) static EI_IMPULSE_ERROR can_run_classifier_image_quantiz
  */
 extern "C" EI_IMPULSE_ERROR run_classifier_image_quantized(
     const ei_impulse_t *impulse,
-    signal_t *signal,
+    signal_t_ei *signal,
     ei_impulse_result_t *result,
     bool debug = false)
 {
@@ -929,7 +929,7 @@ __attribute__((unused)) void run_classifier_deinit(ei_impulse_handle_t *handle)
  *
  * **Example**: [nano_ble33_sense_microphone_continuous.ino](https://github.com/edgeimpulse/example-lacuna-ls200/blob/main/nano_ble33_sense_microphone_continous/nano_ble33_sense_microphone_continuous.ino)
  *
- * @param[in] signal  Pointer to a signal_t struct that contains the number of elements in the
+ * @param[in] signal  Pointer to a signal_t_ei struct that contains the number of elements in the
  *  slice of raw features (e.g. `EI_CLASSIFIER_SLICE_SIZE`) and a pointer to a callback that reads
  *  in the slice of raw features.
  * @param[out] result Pointer to an `ei_impulse_result_t` struct that contains the various output
@@ -942,7 +942,7 @@ __attribute__((unused)) void run_classifier_deinit(ei_impulse_handle_t *handle)
  *  completed successfully.
  */
 extern "C" EI_IMPULSE_ERROR run_classifier_continuous(
-    signal_t *signal,
+    signal_t_ei *signal,
     ei_impulse_result_t *result,
     bool debug = false,
     bool enable_maf_unused = true)
@@ -989,7 +989,7 @@ extern "C" EI_IMPULSE_ERROR run_classifier_continuous(
  * **Example**: [nano_ble33_sense_microphone_continuous.ino](https://github.com/edgeimpulse/example-lacuna-ls200/blob/main/nano_ble33_sense_microphone_continous/nano_ble33_sense_microphone_continuous.ino)
  *
  * @param[in] impulse `ei_impulse_handle_t` struct with information about preprocessing and model.
- * @param[in] signal  Pointer to a signal_t struct that contains the number of elements in the
+ * @param[in] signal  Pointer to a signal_t_ei struct that contains the number of elements in the
  *  slice of raw features (e.g. `EI_CLASSIFIER_SLICE_SIZE`) and a pointer to a callback that reads
  *  in the slice of raw features.
  * @param[out] result Pointer to an `ei_impulse_result_t` struct that contains the various output
@@ -1003,7 +1003,7 @@ extern "C" EI_IMPULSE_ERROR run_classifier_continuous(
  */
 __attribute__((unused)) EI_IMPULSE_ERROR run_classifier_continuous(
     ei_impulse_handle_t *impulse,
-    signal_t *signal,
+    signal_t_ei *signal,
     ei_impulse_result_t *result,
     bool debug = false,
     bool enable_maf_unused = true)
@@ -1019,7 +1019,7 @@ __attribute__((unused)) EI_IMPULSE_ERROR run_classifier_continuous(
  *
  * **Blocking**: yes
  *
- * @param[in] signal Pointer to a `signal_t` struct that contains the total length of the raw
+ * @param[in] signal Pointer to a `signal_t_ei` struct that contains the total length of the raw
  *  feature array, which must match EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE, and a pointer to a callback
  *  that reads in the raw features.
  * @param[out] result  Pointer to an ei_impulse_result_t struct that will contain the various output
@@ -1030,7 +1030,7 @@ __attribute__((unused)) EI_IMPULSE_ERROR run_classifier_continuous(
  *  completed successfully.
  */
 extern "C" EI_IMPULSE_ERROR run_classifier(
-    signal_t *signal,
+    signal_t_ei *signal,
     ei_impulse_result_t *result,
     bool debug = false)
 {
@@ -1041,7 +1041,7 @@ extern "C" EI_IMPULSE_ERROR run_classifier(
  * @brief Run the classifier over a raw features array.
  *
  *
- * Accepts a `signal_t` input struct pointing to a callback that reads in pages of raw features.
+ * Accepts a `signal_t_ei` input struct pointing to a callback that reads in pages of raw features.
  * `run_classifier()` performs any necessary preprocessing on the raw features (e.g. DSP, cropping
  * of images, etc.) before performing inference. Results from inference are stored in an
  * `ei_impulse_result_t` struct.
@@ -1052,7 +1052,7 @@ extern "C" EI_IMPULSE_ERROR run_classifier(
  *
  * @param[in] impulse Pointer to an `ei_impulse_handle_t` struct that contains the model and
  *  preprocessing information.
- * @param[in] signal Pointer to a `signal_t` struct that contains the total length of the raw
+ * @param[in] signal Pointer to a `signal_t_ei` struct that contains the total length of the raw
  *  feature array, which must match EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE, and a pointer to a callback
  *  that reads in the raw features.
  * @param[out] result  Pointer to an ei_impulse_result_t struct that will contain the various output
@@ -1064,7 +1064,7 @@ extern "C" EI_IMPULSE_ERROR run_classifier(
  */
 __attribute__((unused)) EI_IMPULSE_ERROR run_classifier(
     ei_impulse_handle_t *impulse,
-    signal_t *signal,
+    signal_t_ei *signal,
     ei_impulse_result_t *result,
     bool debug = false)
 {
@@ -1141,7 +1141,7 @@ __attribute__((unused)) EI_IMPULSE_ERROR run_impulse(
 
     result->timing.sampling = (ei_read_timer_us() - sampling_us_start) / 1000;
 
-    signal_t signal;
+    signal_t_ei signal;
     int err = numpy::signal_from_buffer(x, impulse.dsp_input_frame_size, &signal);
     if (err != 0) {
         free(x);

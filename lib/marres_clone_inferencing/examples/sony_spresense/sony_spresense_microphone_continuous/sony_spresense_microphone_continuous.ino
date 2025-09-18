@@ -97,7 +97,7 @@ void loop()
 
     theAudio->stopRecorder();
 
-    signal_t signal;
+    signal_t_ei signal;
     signal.total_length = ei_default_impulse.impulse->slice_size * ei_default_impulse.impulse->raw_samples_per_frame;
     signal.get_data = &microphone_audio_signal_get_data;
     ei_impulse_result_t result = {0};

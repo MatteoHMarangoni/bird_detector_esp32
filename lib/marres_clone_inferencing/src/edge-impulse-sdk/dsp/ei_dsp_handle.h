@@ -56,7 +56,7 @@ public:
      * @return int 0 on success, anything else for failure
      */
     virtual int extract(
-        ei::signal_t *signal,
+        ei::signal_t_ei *signal,
         ei::matrix_t *output_matrix,
         void *config,
         const float frequency,

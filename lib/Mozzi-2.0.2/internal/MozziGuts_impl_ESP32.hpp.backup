@@ -1,0 +1,227 @@
+/*
+ * MozziGuts_impl_ESP32.hpp
+ *
+ * This file is part of Mozzi.
+ *
+ * Copyright 2020-2024 Dieter Vandoren, Thomas Friedrichsmeier and the Mozzi Team
+ * Copyright 2025 Thomas Combriat and the Mozzi Team
+ *
+ * Mozzi is licensed under the GNU Lesser General Public Licence (LGPL) Version 2.1 or later.
+ *
+ * ARDUINO PLATFORM COMPATIBLE VERSION
+ * - Replaced ESP-IDF specific APIs with Arduino-compatible equivalents
+ * - Uses legacy I2S driver instead of new I2S channel driver
+ * - Uses Arduino timer APIs instead of gptimer
+ * - Compatible with PlatformIO Arduino framework
+ */
+
+#if !(IS_ESP32())
+#  error "Wrong implementation included for this platform"
+#endif
+
+namespace MozziPrivate {
+  ////// BEGIN analog input code ////////
+#if MOZZI_IS(MOZZI_ANALOG_READ, MOZZI_ANALOG_READ_STANDARD)
+#error not yet implemented
+
+#define getADCReading() 0
+#define channelNumToIndex(channel) channel
+  uint8_t adcPinToChannelNum(uint8_t pin) {
+    return pin;
+  }
+  void adcStartConversion(uint8_t channel) {
+  }
+  void startSecondADCReadOnCurrentChannel() {
+  }
+  void setupMozziADC(int8_t speed) {
+  }
+  void setupFastAnalogRead(int8_t speed) {
+  }
+
+#endif
+  ////// END analog input code ////////
+
+  //// BEGIN AUDIO OUTPUT code ///////
+#if MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_I2S_DAC) || MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_PDM_VIA_I2S)
+
+  // Use Arduino-compatible legacy I2S driver
+  #include <driver/i2s.h>
+
+  const i2s_port_t i2s_num = MOZZI_I2S_PORT;
+  
+  // On ESP32 we cannot test whether the DMA buffer has room. Instead, we have to use a one-sample mini buffer. In each iteration we
+  // _try_ to write that sample to the DMA buffer, and if successful, we can buffer the next sample. Somewhat cumbersome, but works.
+  static bool _esp32_can_buffer_next = true;
+  
+  #if MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_I2S_DAC)  
+    #define ESP_SAMPLE_SIZE (2 * sizeof(int16_t))
+    static int16_t _esp32_prev_sample[2]; // for simplicity, but also because the output is cleaner (why??) we always send stereo samples
+  #elif MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_PDM_VIA_I2S)
+    static uint32_t _esp32_prev_sample[MOZZI_PDM_RESOLUTION];
+    #define ESP_SAMPLE_SIZE (MOZZI_PDM_RESOLUTION * sizeof(uint32_t))
+  #endif
+  
+  inline bool esp32_tryWriteSample() {
+    size_t bytes_written;
+    #if MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_I2S_DAC)
+        i2s_write(i2s_num, _esp32_prev_sample, ESP_SAMPLE_SIZE, &bytes_written, 0);
+    #elif MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_PDM_VIA_I2S)
+        i2s_write(i2s_num, _esp32_prev_sample, ESP_SAMPLE_SIZE, &bytes_written, 0);
+    #endif
+    return (bytes_written != 0);
+  }
+
+  inline bool canBufferAudioOutput() {
+    if (_esp32_can_buffer_next) return true;
+    _esp32_can_buffer_next = esp32_tryWriteSample();
+    return _esp32_can_buffer_next;
+  }
+
+#endif
+
+  //// Audio output for internal DAC and PWM modes ////
+#if MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_INTERNAL_DAC)
+  static uint8_t _esp32_prev_sample[2];
+  #define ESP_SAMPLE_SIZE (sizeof(uint8_t))
+  static bool _esp32_can_buffer_next = true;
+  
+  inline bool canBufferAudioOutput() {
+    return true; // Internal DAC is always ready
+  }
+#endif
+
+#if MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_PWM)
+  static bool _esp32_can_buffer_next = true;
+  
+  inline bool canBufferAudioOutput() {
+    return true; // PWM is always ready
+  }
+#endif
+
+  //// Audio output function ////
+#if MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_I2S_DAC) || MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_PDM_VIA_I2S) || MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_INTERNAL_DAC) || MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_PWM)
+  inline void audioOutput(const AudioOutput f) {
+#if MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_INTERNAL_DAC)
+    dacWrite(25, f.l() + MOZZI_AUDIO_BIAS);
+#if (MOZZI_AUDIO_CHANNELS > 1)
+    dacWrite(26, f.r() + MOZZI_AUDIO_BIAS);
+#endif
+    
+#elif MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_PWM)
+    ledcWrite(MOZZI_AUDIO_PIN_1, (f.l() + MOZZI_AUDIO_BIAS));
+#if (MOZZI_AUDIO_CHANNELS > 1)
+    ledcWrite(MOZZI_AUDIO_PIN_2, (f.r() + MOZZI_AUDIO_BIAS));
+#endif
+    
+#elif MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_PDM_VIA_I2S)
+    for (uint8_t i = 0; i < MOZZI_PDM_RESOLUTION; ++i) {
+      _esp32_prev_sample[i] = pdmCode32(f.l() + MOZZI_AUDIO_BIAS);
+    }
+    _esp32_can_buffer_next = esp32_tryWriteSample();
+    
+#elif MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_I2S_DAC)
+    // PT8211 takes signed samples
+    _esp32_prev_sample[0] = f.l();
+#if (MOZZI_AUDIO_CHANNELS > 1)
+    _esp32_prev_sample[1] = f.r();
+#else
+    _esp32_prev_sample[1] = 0;
+#endif
+    _esp32_can_buffer_next = esp32_tryWriteSample();
+#endif
+  }
+#endif
+
+  //// Timer setup for timed audio modes ////
+#if MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_EXTERNAL_TIMED, MOZZI_OUTPUT_INTERNAL_DAC, MOZZI_OUTPUT_PWM)
+  // Arduino-compatible timer implementation
+  hw_timer_t *mozzi_timer = NULL;
+
+  void IRAM_ATTR timer_on_alarm_cb() {
+    defaultAudioOutput();
+  }
+#endif
+
+  //// Audio initialization function ////
+  static void startAudio() {
+    /* Normally, the internal DAC can run on DMA, hence self triggering. Did not managed to get that to work (see: https://github.com/espressif/arduino-esp32/issues/10851) so, for now, we are just using the Mozzi buffer and send dacWrite orders.
+     */
+#if MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_EXTERNAL_TIMED, MOZZI_OUTPUT_INTERNAL_DAC, MOZZI_OUTPUT_PWM)
+    // Arduino-compatible timer setup
+    mozzi_timer = timerBegin(0, 80, true);  // Timer 0, prescaler 80 (1MHz), count up
+    timerAttachInterrupt(mozzi_timer, &timer_on_alarm_cb, true);
+    timerAlarmWrite(mozzi_timer, 1000000UL / MOZZI_AUDIO_RATE, true);  // Auto-reload
+    timerAlarmEnable(mozzi_timer);
+    
+#if MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_PWM)   
+    ledcSetup(0, MOZZI_AUDIO_RATE, MOZZI_AUDIO_BITS);
+    ledcAttachPin(MOZZI_AUDIO_PIN_1, 0);
+#if (MOZZI_AUDIO_CHANNELS > 1)
+    ledcSetup(1, MOZZI_AUDIO_RATE, MOZZI_AUDIO_BITS);
+    ledcAttachPin(MOZZI_AUDIO_PIN_2, 1);
+#endif
+#endif
+
+#elif MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_I2S_DAC) || MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_PDM_VIA_I2S)
+    // Arduino-compatible legacy I2S setup
+    i2s_config_t i2s_config = {
+      .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
+      .sample_rate = MOZZI_AUDIO_RATE,
+      .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
+#if MOZZI_IS(MOZZI_I2S_FORMAT, MOZZI_I2S_FORMAT_PLAIN)
+      .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
+      .communication_format = I2S_COMM_FORMAT_I2S,
+#elif MOZZI_IS(MOZZI_I2S_FORMAT, MOZZI_I2S_FORMAT_LSBJ)
+      .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
+      .communication_format = I2S_COMM_FORMAT_I2S_MSB,
+#endif
+      .intr_alloc_flags = 0,
+      .dma_buf_count = 8,
+      .dma_buf_len = 64,
+      .use_apll = false,
+      .tx_desc_auto_clear = true,
+      .fixed_mclk = 0
+    };
+
+#if MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_PDM_VIA_I2S)
+    i2s_config.sample_rate = MOZZI_AUDIO_RATE * MOZZI_PDM_RESOLUTION;
+#endif
+
+    i2s_pin_config_t pin_config = {
+      .bck_io_num = MOZZI_I2S_PIN_BCK,
+      .ws_io_num = MOZZI_I2S_PIN_WS,
+      .data_out_num = MOZZI_I2S_PIN_DATA,
+      .data_in_num = I2S_PIN_NO_CHANGE
+    };
+
+    i2s_driver_install(i2s_num, &i2s_config, 0, NULL);
+    i2s_set_pin(i2s_num, &pin_config);
+    i2s_zero_dma_buffer(i2s_num);
+#endif
+  }
+
+  //// Audio cleanup function ////
+  void stopMozzi() {
+#if MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_EXTERNAL_TIMED, MOZZI_OUTPUT_INTERNAL_DAC, MOZZI_OUTPUT_PWM)
+    if (mozzi_timer != NULL) {
+      timerAlarmDisable(mozzi_timer);
+      timerDetachInterrupt(mozzi_timer);
+      timerEnd(mozzi_timer);
+      mozzi_timer = NULL;
+    }
+#elif MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_I2S_DAC) || MOZZI_IS(MOZZI_AUDIO_MODE, MOZZI_OUTPUT_PDM_VIA_I2S)
+    i2s_driver_uninstall(i2s_num);
+#endif
+  }
+
+  //// BEGIN Random seeding ////////
+  void MozziRandPrivate::autoSeed() {
+    x = esp_random();
+    y = esp_random();
+    z = esp_random();
+  }
+  //// END Random seeding ////////
+
+#undef ESP_SAMPLE_SIZE    // only used inside this file
+
+} // namespace MozziPrivate

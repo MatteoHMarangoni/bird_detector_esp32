@@ -78,7 +78,7 @@ static size_t ei_dsp_cont_current_frame_size = 0;
 static int ei_dsp_cont_current_frame_ix = 0;
 
 __attribute__((unused)) int extract_hr_features(
-    signal_t *signal,
+    signal_t_ei *signal,
     matrix_t *output_matrix,
     void *config_ptr,
     const float frequency)
@@ -95,7 +95,7 @@ __attribute__((unused)) int extract_hr_features(
 }
 
 __attribute__((unused)) int extract_spectral_analysis_features(
-    signal_t *signal,
+    signal_t_ei *signal,
     matrix_t *output_matrix,
     void *config_ptr,
     const float frequency)
@@ -159,7 +159,7 @@ __attribute__((unused)) int extract_spectral_analysis_features(
     return EIDSP_NOT_SUPPORTED;
 }
 
-__attribute__((unused)) int extract_raw_features(signal_t *signal, matrix_t *output_matrix, void *config_ptr, const float frequency) {
+__attribute__((unused)) int extract_raw_features(signal_t_ei *signal, matrix_t *output_matrix, void *config_ptr, const float frequency) {
     ei_dsp_config_raw_t config = *((ei_dsp_config_raw_t*)config_ptr);
 
     // Because of rounding errors during re-sampling the output size of the block might be
@@ -182,7 +182,7 @@ __attribute__((unused)) int extract_raw_features(signal_t *signal, matrix_t *out
     return EIDSP_OK;
 }
 
-__attribute__((unused)) int extract_flatten_features(signal_t *signal, matrix_t *output_matrix, void *config_ptr, const float frequency) {
+__attribute__((unused)) int extract_flatten_features(signal_t_ei *signal, matrix_t *output_matrix, void *config_ptr, const float frequency) {
     auto handle = flatten_class::create(config_ptr, frequency);
     auto ret = handle->extract(signal, output_matrix, config_ptr, frequency, nullptr);
     delete handle;
@@ -194,7 +194,7 @@ static int preemphasized_audio_signal_get_data(size_t offset, size_t length, flo
     return preemphasis->get_data(offset, length, out_ptr);
 }
 
-__attribute__((unused)) int extract_mfcc_features(signal_t *signal, matrix_t *output_matrix, void *config_ptr, const float sampling_frequency) {
+__attribute__((unused)) int extract_mfcc_features(signal_t_ei *signal, matrix_t *output_matrix, void *config_ptr, const float sampling_frequency) {
     ei_dsp_config_mfcc_t config = *((ei_dsp_config_mfcc_t*)config_ptr);
 
     if (config.axes != 1) {
@@ -215,7 +215,7 @@ __attribute__((unused)) int extract_mfcc_features(signal_t *signal, matrix_t *ou
     class speechpy::processing::preemphasis pre(signal, config.pre_shift, config.pre_cof, false);
     preemphasis = &pre;
 
-    signal_t preemphasized_audio_signal;
+    signal_t_ei preemphasized_audio_signal;
     preemphasized_audio_signal.total_length = signal->total_length;
     preemphasized_audio_signal.get_data = &preemphasized_audio_signal_get_data;
 
@@ -256,7 +256,7 @@ __attribute__((unused)) int extract_mfcc_features(signal_t *signal, matrix_t *ou
 }
 
 
-__attribute__((unused)) static int extract_mfcc_run_slice(signal_t *signal, matrix_t *output_matrix, ei_dsp_config_mfcc_t *config, const float sampling_frequency, matrix_size_t *matrix_size_out, int implementation_version) {
+__attribute__((unused)) static int extract_mfcc_run_slice(signal_t_ei *signal, matrix_t *output_matrix, ei_dsp_config_mfcc_t *config, const float sampling_frequency, matrix_size_t *matrix_size_out, int implementation_version) {
     uint32_t frequency = (uint32_t)sampling_frequency;
 
     int x;
@@ -298,7 +298,7 @@ __attribute__((unused)) static int extract_mfcc_run_slice(signal_t *signal, matr
     return EIDSP_OK;
 }
 
-__attribute__((unused)) int extract_mfcc_per_slice_features(signal_t *signal, matrix_t *output_matrix, void *config_ptr, const float sampling_frequency, matrix_size_t *matrix_size_out) {
+__attribute__((unused)) int extract_mfcc_per_slice_features(signal_t_ei *signal, matrix_t *output_matrix, void *config_ptr, const float sampling_frequency, matrix_size_t *matrix_size_out) {
 #if defined(__cplusplus) && EI_C_LINKAGE == 1
     ei_printf("ERR: Continuous audio is not supported when EI_C_LINKAGE is defined\n");
     EIDSP_ERR(EIDSP_NOT_SUPPORTED);
@@ -324,7 +324,7 @@ __attribute__((unused)) int extract_mfcc_per_slice_features(signal_t *signal, ma
     class speechpy::processing::preemphasis pre(signal, config.pre_shift, config.pre_cof, false);
     preemphasis = &pre;
 
-    signal_t preemphasized_audio_signal;
+    signal_t_ei preemphasized_audio_signal;
     preemphasized_audio_signal.total_length = signal->total_length;
     preemphasized_audio_signal.get_data = &preemphasized_audio_signal_get_data;
 
@@ -395,7 +395,7 @@ __attribute__((unused)) int extract_mfcc_per_slice_features(signal_t *signal, ma
         }
 
         // now ei_dsp_cont_current_frame is complete
-        signal_t frame_signal;
+        signal_t_ei frame_signal;
         x = numpy::signal_from_buffer(ei_dsp_cont_current_frame, frame_length_values, &frame_signal);
         if (x != EIDSP_OK) {
             EIDSP_ERR(x);
@@ -427,7 +427,7 @@ __attribute__((unused)) int extract_mfcc_per_slice_features(signal_t *signal, ma
     // now... we need to discard part of the signal...
     SignalWithRange signal_with_range(&preemphasized_audio_signal, offset_in_signal, signal->total_length);
 
-    signal_t *range_signal = signal_with_range.get_signal();
+    signal_t_ei *range_signal = signal_with_range.get_signal();
     size_t range_signal_orig_length = range_signal->total_length;
 
     // then we'll just go through normal processing of the signal:
@@ -467,7 +467,7 @@ __attribute__((unused)) int extract_mfcc_per_slice_features(signal_t *signal, ma
 #endif
 }
 
-__attribute__((unused)) int extract_spectrogram_features(signal_t *signal, matrix_t *output_matrix, void *config_ptr, const float sampling_frequency) {
+__attribute__((unused)) int extract_spectrogram_features(signal_t_ei *signal, matrix_t *output_matrix, void *config_ptr, const float sampling_frequency) {
     ei_dsp_config_spectrogram_t config = *((ei_dsp_config_spectrogram_t*)config_ptr);
 
     if (config.axes != 1) {
@@ -524,7 +524,7 @@ __attribute__((unused)) int extract_spectrogram_features(signal_t *signal, matri
 }
 
 
-__attribute__((unused)) static int extract_spectrogram_run_slice(signal_t *signal, matrix_t *output_matrix, ei_dsp_config_spectrogram_t *config, const float sampling_frequency, matrix_size_t *matrix_size_out) {
+__attribute__((unused)) static int extract_spectrogram_run_slice(signal_t_ei *signal, matrix_t *output_matrix, ei_dsp_config_spectrogram_t *config, const float sampling_frequency, matrix_size_t *matrix_size_out) {
     uint32_t frequency = (uint32_t)sampling_frequency;
 
     int x;
@@ -569,7 +569,7 @@ __attribute__((unused)) static int extract_spectrogram_run_slice(signal_t *signa
     return EIDSP_OK;
 }
 
-__attribute__((unused)) int extract_spectrogram_per_slice_features(signal_t *signal, matrix_t *output_matrix, void *config_ptr, const float sampling_frequency, matrix_size_t *matrix_size_out) {
+__attribute__((unused)) int extract_spectrogram_per_slice_features(signal_t_ei *signal, matrix_t *output_matrix, void *config_ptr, const float sampling_frequency, matrix_size_t *matrix_size_out) {
 #if defined(__cplusplus) && EI_C_LINKAGE == 1
     ei_printf("ERR: Continuous audio is not supported when EI_C_LINKAGE is defined\n");
     EIDSP_ERR(EIDSP_NOT_SUPPORTED);
@@ -659,7 +659,7 @@ __attribute__((unused)) int extract_spectrogram_per_slice_features(signal_t *sig
         }
 
         // now ei_dsp_cont_current_frame is complete
-        signal_t frame_signal;
+        signal_t_ei frame_signal;
         x = numpy::signal_from_buffer(ei_dsp_cont_current_frame, frame_length_values, &frame_signal);
         if (x != EIDSP_OK) {
             EIDSP_ERR(x);
@@ -691,7 +691,7 @@ __attribute__((unused)) int extract_spectrogram_per_slice_features(signal_t *sig
     // now... we need to discard part of the signal...
     SignalWithRange signal_with_range(signal, offset_in_signal, signal->total_length);
 
-    signal_t *range_signal = signal_with_range.get_signal();
+    signal_t_ei *range_signal = signal_with_range.get_signal();
     size_t range_signal_orig_length = range_signal->total_length;
 
     // then we'll just go through normal processing of the signal:
@@ -736,7 +736,7 @@ __attribute__((unused)) int extract_spectrogram_per_slice_features(signal_t *sig
 }
 
 
-__attribute__((unused)) int extract_mfe_features(signal_t *signal, matrix_t *output_matrix, void *config_ptr, const float sampling_frequency) {
+__attribute__((unused)) int extract_mfe_features(signal_t_ei *signal, matrix_t *output_matrix, void *config_ptr, const float sampling_frequency) {
     ei_dsp_config_mfe_t config = *((ei_dsp_config_mfe_t*)config_ptr);
 
     if (config.axes != 1) {
@@ -753,7 +753,7 @@ __attribute__((unused)) int extract_mfe_features(signal_t *signal, matrix_t *out
 
     const uint32_t frequency = static_cast<uint32_t>(sampling_frequency);
 
-    signal_t preemphasized_audio_signal;
+    signal_t_ei preemphasized_audio_signal;
 
     // before version 3 we did not have preemphasis
     if (config.implementation_version < 3) {
@@ -835,7 +835,7 @@ __attribute__((unused)) int extract_mfe_features(signal_t *signal, matrix_t *out
     return EIDSP_OK;
 }
 
-__attribute__((unused)) static int extract_mfe_run_slice(signal_t *signal, matrix_t *output_matrix, ei_dsp_config_mfe_t *config, const float sampling_frequency, matrix_size_t *matrix_size_out) {
+__attribute__((unused)) static int extract_mfe_run_slice(signal_t_ei *signal, matrix_t *output_matrix, ei_dsp_config_mfe_t *config, const float sampling_frequency, matrix_size_t *matrix_size_out) {
     uint32_t frequency = (uint32_t)sampling_frequency;
 
     int x;
@@ -887,7 +887,7 @@ __attribute__((unused)) static int extract_mfe_run_slice(signal_t *signal, matri
     return EIDSP_OK;
 }
 
-__attribute__((unused)) int extract_mfe_per_slice_features(signal_t *signal, matrix_t *output_matrix, void *config_ptr, const float sampling_frequency, matrix_size_t *matrix_size_out) {
+__attribute__((unused)) int extract_mfe_per_slice_features(signal_t_ei *signal, matrix_t *output_matrix, void *config_ptr, const float sampling_frequency, matrix_size_t *matrix_size_out) {
 #if defined(__cplusplus) && EI_C_LINKAGE == 1
     ei_printf("ERR: Continuous audio is not supported when EI_C_LINKAGE is defined\n");
     EIDSP_ERR(EIDSP_NOT_SUPPORTED);
@@ -926,7 +926,7 @@ __attribute__((unused)) int extract_mfe_per_slice_features(signal_t *signal, mat
     }
 
     // ok all setup, let's construct the signal (with preemphasis for impl version >3)
-    signal_t preemphasized_audio_signal;
+    signal_t_ei preemphasized_audio_signal;
 
    // before version 3 we did not have preemphasis
     if (config.implementation_version < 3) {
@@ -1016,7 +1016,7 @@ __attribute__((unused)) int extract_mfe_per_slice_features(signal_t *signal, mat
         }
 
         // now ei_dsp_cont_current_frame is complete
-        signal_t frame_signal;
+        signal_t_ei frame_signal;
         x = numpy::signal_from_buffer(ei_dsp_cont_current_frame, frame_length_values, &frame_signal);
         if (x != EIDSP_OK) {
             if (preemphasis) {
@@ -1057,7 +1057,7 @@ __attribute__((unused)) int extract_mfe_per_slice_features(signal_t *signal, mat
     // now... we need to discard part of the signal...
     SignalWithRange signal_with_range(&preemphasized_audio_signal, offset_in_signal, signal->total_length);
 
-    signal_t *range_signal = signal_with_range.get_signal();
+    signal_t_ei *range_signal = signal_with_range.get_signal();
     size_t range_signal_orig_length = range_signal->total_length;
 
     // then we'll just go through normal processing of the signal:
@@ -1112,7 +1112,7 @@ __attribute__((unused)) int extract_mfe_per_slice_features(signal_t *signal, mat
 #endif
 }
 
-__attribute__((unused)) int extract_image_features(signal_t *signal, matrix_t *output_matrix, void *config_ptr, const float frequency) {
+__attribute__((unused)) int extract_image_features(signal_t_ei *signal, matrix_t *output_matrix, void *config_ptr, const float frequency) {
     ei_dsp_config_image_t config = *((ei_dsp_config_image_t*)config_ptr);
 
     int16_t channel_count = strcmp(config.channels, "Grayscale") == 0 ? 1 : 3;
@@ -1172,7 +1172,7 @@ __attribute__((unused)) int extract_image_features(signal_t *signal, matrix_t *o
 /*
  * Since we run the preprocessing on the DRP we pass the input buffer (mostly) as-is.
 */
-__attribute__((unused)) int extract_drpai_features_quantized(signal_t *signal, matrix_u8_t *output_matrix, void *config_ptr, const float frequency) {
+__attribute__((unused)) int extract_drpai_features_quantized(signal_t_ei *signal, matrix_u8_t *output_matrix, void *config_ptr, const float frequency) {
     ei_dsp_config_image_t config = *((ei_dsp_config_image_t*)config_ptr);
 
     int16_t channel_count = strcmp(config.channels, "Grayscale") == 0 ? 1 : 3;
@@ -1233,7 +1233,7 @@ __attribute__((unused)) int extract_drpai_features_quantized(signal_t *signal, m
 
 #if (EI_CLASSIFIER_QUANTIZATION_ENABLED == 1) && (EI_CLASSIFIER_INFERENCING_ENGINE != EI_CLASSIFIER_DRPAI)
 
-__attribute__((unused)) int extract_image_features_quantized(signal_t *signal, matrix_i8_t *output_matrix, void *config_ptr, float scale, float zero_point, const float frequency,
+__attribute__((unused)) int extract_image_features_quantized(signal_t_ei *signal, matrix_i8_t *output_matrix, void *config_ptr, float scale, float zero_point, const float frequency,
                                                              int image_scaling) {
     ei_dsp_config_image_t config = *((ei_dsp_config_image_t*)config_ptr);
 

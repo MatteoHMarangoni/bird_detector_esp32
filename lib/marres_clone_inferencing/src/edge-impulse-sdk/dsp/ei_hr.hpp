@@ -65,7 +65,7 @@ public:
     }
 
     int extract(
-        ei::signal_t *signal,
+        ei::signal_t_ei *signal,
         ei::matrix_t *output_matrix,
         void *config_ptr,
         const float frequency,

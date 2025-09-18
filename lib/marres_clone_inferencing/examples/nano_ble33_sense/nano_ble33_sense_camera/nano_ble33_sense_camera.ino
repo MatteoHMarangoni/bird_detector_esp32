@@ -191,7 +191,7 @@ void loop()
             break;
         }
 
-        ei::signal_t signal;
+        ei::signal_t_ei signal;
         signal.total_length = EI_CLASSIFIER_INPUT_WIDTH * EI_CLASSIFIER_INPUT_HEIGHT;
         signal.get_data = &ei_camera_cutout_get_data;
 

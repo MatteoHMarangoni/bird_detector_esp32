@@ -38,7 +38,7 @@ namespace speechpy {
 
 // one stack frame returned by stack_frames
 typedef struct ei_stack_frames_info {
-    signal_t *signal;
+    signal_t_ei *signal;
     ei_vector<uint32_t> frame_ixs;
     int frame_length;
 } stack_frames_info_t;

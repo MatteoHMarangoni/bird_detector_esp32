@@ -479,7 +479,7 @@ static EI_IMPULSE_ERROR get_interpreter(ei_learning_block_config_tflite_graph_t 
 
 extern "C" EI_IMPULSE_ERROR run_nn_inference_from_dsp(
     ei_learning_block_config_tflite_graph_t *block_config,
-    signal_t *signal,
+    signal_t_ei *signal,
     matrix_t *output_matrix)
 {
     tflite::Interpreter *interpreter;
@@ -519,7 +519,7 @@ extern "C" EI_IMPULSE_ERROR run_nn_inference_from_dsp(
     return EI_IMPULSE_OK;
 }
 
-__attribute__((unused)) int extract_tflite_features(signal_t *signal, matrix_t *output_matrix, void *config_ptr, const float frequency) {
+__attribute__((unused)) int extract_tflite_features(signal_t_ei *signal, matrix_t *output_matrix, void *config_ptr, const float frequency) {
 
     ei_dsp_config_tflite_t *dsp_config = (ei_dsp_config_tflite_t*)config_ptr;
 

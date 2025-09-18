@@ -103,7 +103,7 @@ void loop()
 
     ei_printf("Recording done\n");
 
-    signal_t signal;
+    signal_t_ei signal;
     signal.total_length = ei_default_impulse.impulse->dsp_input_frame_size;
     signal.get_data = &microphone_audio_signal_get_data;
     ei_impulse_result_t result = { 0 };

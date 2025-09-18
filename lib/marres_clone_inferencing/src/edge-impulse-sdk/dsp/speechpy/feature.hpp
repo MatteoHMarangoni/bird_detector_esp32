@@ -214,7 +214,7 @@ public:
      * @EIDSP_OK if OK
      */
     static int mfe(matrix_t *out_features, matrix_t *out_energies,
-        signal_t *signal,
+        signal_t_ei *signal,
         uint32_t sampling_frequency,
         float frame_length, float frame_stride, uint16_t num_filters,
         uint16_t fft_length, uint32_t low_frequency, uint32_t high_frequency,
@@ -416,7 +416,7 @@ public:
      * @EIDSP_OK if OK
      */
     static int mfe_v3(matrix_t *out_features, matrix_t *out_energies,
-        signal_t *signal,
+        signal_t_ei *signal,
         uint32_t sampling_frequency,
         float frame_length, float frame_stride, uint16_t num_filters,
         uint16_t fft_length, uint32_t low_frequency, uint32_t high_frequency,
@@ -566,7 +566,7 @@ public:
      * @EIDSP_OK if OK
      */
     static int spectrogram(matrix_t *out_features,
-        signal_t *signal, float sampling_frequency,
+        signal_t_ei *signal, float sampling_frequency,
         float frame_length, float frame_stride, uint16_t fft_length,
         uint16_t version
         )
@@ -712,7 +712,7 @@ public:
      *     be eliminated or not.
      * @returns 0 if OK
      */
-    static int mfcc(matrix_t *out_features, signal_t *signal,
+    static int mfcc(matrix_t *out_features, signal_t_ei *signal,
         uint32_t sampling_frequency, float frame_length, float frame_stride,
         uint8_t num_cepstral, uint16_t num_filters, uint16_t fft_length,
         uint32_t low_frequency, uint32_t high_frequency, bool dc_elimination,

@@ -1495,7 +1495,7 @@ public:
      * @param signal Output signal
      * @returns EIDSP_OK if ok
      */
-    static int signal_from_buffer(const float *data, size_t data_size, signal_t *signal)
+    static int signal_from_buffer(const float *data, size_t data_size, signal_t_ei *signal)
     {
         signal->total_length = data_size;
 #ifdef __MBED__

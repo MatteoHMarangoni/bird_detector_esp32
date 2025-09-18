@@ -137,7 +137,7 @@ typedef struct {
     std::vector<std::tuple<int, int, int, int>> segments;
 } ei_object_counting_config_t;
 
-typedef int (*extract_fn_t)(ei::signal_t *signal, ei::matrix_t *output_matrix, void *config, float frequency);
+typedef int (*extract_fn_t)(ei::signal_t_ei *signal, ei::matrix_t *output_matrix, void *config, float frequency);
 
 typedef struct {
     float *mean_data;

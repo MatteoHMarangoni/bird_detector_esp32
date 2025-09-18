@@ -62,7 +62,7 @@ LL_ATON_DECLARE_NAMED_NN_INSTANCE_AND_INTERFACE(Default);
 
 EI_IMPULSE_ERROR run_nn_inference_image_quantized(
     const ei_impulse_t *impulse,
-    signal_t *signal,
+    signal_t_ei *signal,
     uint32_t learn_block_index,
     ei_impulse_result_t *result,
     void *config_ptr,

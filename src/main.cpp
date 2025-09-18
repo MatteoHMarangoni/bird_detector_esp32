@@ -1,443 +1,471 @@
-/*
- * Audio Inference for ESP32 with SD Card Support
- *
- * This code loads WAV files from an SD card, applies min-max scaling,
- * and runs neural network inference with statistics tracking.
- */
-
-/* Combined Audio Inference with Mode Selection */
-
-
 #include <Arduino.h>
-#include <SD.h>
-#include <SPI.h>
-#include <vector>
+#include <driver/i2s.h>
+#include <math.h>
 
-#include <marres_clone_inferencing.h> // Edge Impulse library
+// Define PI if not already defined
+#define PI 3.14159265359
 
-// Audio buffer stored in PSRAM
-static float *input_data = NULL;
+// Setup ES8388 microphone (input) using AudioTools library
+#include <Wire.h>
+#include "AudioTools.h"
+#include "AudioTools/AudioLibs/I2SCodecStream.h"
+#include "AudioTools/AudioLibs/MozziStream.h"
+#define MOZZI_AUDIO_MODE MOZZI_OUTPUT_EXTERNAL_CUSTOM
+#include <Oscil.h>               // oscillator template
 
-// PSRAM configuration
-#if CONFIG_SPIRAM_SUPPORT || defined(CONFIG_SPIRAM)
-#define USE_PSRAM 1
-#else
-#define USE_PSRAM 0
-#endif
+#include <tables/sin2048_int8.h> // sine table for oscillator
 
-// SD Card settings for Lolin D32 Pro (built-in SD card)
-//#define SD_CS 4
-
-// SD Card settings for Lolin S3 pro
-#define SD_MOSI 11 // GPIO11
-#define SD_MISO 13 // GPIO13
-#define SD_CLK 12  // GPIO12
-#define SD_CS 46   // GPIO46, changed this from pin 10 as this was giving issues! (pin 46 is printed on the S3 itself)
-
-#define BIRD_FOLDER "/bird"
-#define NO_BIRD_FOLDER "/no_bird"
-#define BIRD_INDEX_FILE "/bird_index.txt"
-#define NO_BIRD_INDEX_FILE "/no_bird_index.txt"
-
-// WAV file constants
-#define WAV_HEADER_SIZE 44
-#define SAMPLE_RATE 16000  // Expected sample rate
-#define BITS_PER_SAMPLE 16 // Expected bits per sample
-
-// Statistics tracking
-typedef struct
-{
-  int total_bird_samples;
-  int total_nobird_samples;
-  int correct_bird_predictions;
-  int correct_nobird_predictions;
-  unsigned long total_inference_time;
-  unsigned long max_inference_time;
-  unsigned long min_inference_time;
-  unsigned long total_loading_time;
-  unsigned long max_loading_time;
-  unsigned long min_loading_time;
-  bool first_measurement; // Add flag for first measurement
-} Statistics;
-
-Statistics stats = {0, 0, 0, 0, 0, 0, ULONG_MAX, 0, 0, ULONG_MAX, true};
-
-
-// Edge Impulse configuration
+// Edge Impulse inference includes and globals
+#include <marres_clone_inferencing.h>
 static float *features = NULL;
+
+int gain = 10; // change if too loud or silent
+
+float score_threshold = 0.5f; // Threshold for bird detection
+
+// Forward declarations
+
+void setupES8388Microphone();
+void recordAndSendAudio();
+void playbackAudio();
+
+void printAverageAmplitude();
+void playTestTone();
+
+void readES8388Data(); // For ES8388 input
+
+void runInferenceOnRecordedAudio(); // Run Edge Impulse inference
+bool extractFeaturesFromBuffer();
+int raw_feature_get_data();
+
+
+// Configuration constants
+#define SAMPLE_RATE 16000 // 16kHz sample rate
+#define BUFFER_SIZE 1024
+#define RECORD_TIME_MS 1000 // 1-second recording
+
+// ES8388 Codec pins (from reference code)
+#define ES8388_I2C_SDA 4
+#define ES8388_I2C_SCL 5
+#define ES8388_I2C_ADDR 0x10
+#define ES8388_I2C_SPEED 100000
+#define ES8388_I2S_MCLK 0
+#define ES8388_I2S_BCLK 15
+#define ES8388_I2S_LRCK 9
+#define ES8388_I2S_DOUT 6 // Data Out from ES8388 to MCU
+#define ES8388_I2S_DIN 10 // Data In from MCU to ES8388
+
+    // Variables for audio processing
+    int sumAmplitude = 0;
+int sampleCount = 0;
+int16_t minAmplitude = INT16_MAX;
+int16_t maxAmplitude = INT16_MIN;
+unsigned long lastPrintTime = 0;
+const int printInterval = 1000; // 1 second
+
+AudioInfo es8388_info(SAMPLE_RATE, 1, 16);
+DriverPins es8388_pins;
+AudioBoard es8388_board(AudioDriverES8388, es8388_pins);
+I2SCodecStream es8388_i2s(es8388_board);
+TwoWire es8388_wire = TwoWire(0);
+MozziStream mozzi; // audio source
+
+StreamCopy copier(es8388_i2s, mozzi); // copy source to sink
+
+Oscil<SIN2048_NUM_CELLS, SAMPLE_RATE> aSin(SIN2048_DATA);
+
+// Buffer to store recorded audio for playback
+int16_t *recordedAudio = NULL;
+int recordedSamples = 0;
+
+bool playTone = false;
+bool playRecording = false;
+
+unsigned long testToneStartTime = 0;
+const int frequency = 1000; // 1 kHz tone
+const int duration_s = 1;   // 1 second duration
+// test tone
+int samples_count = 0;
+
+// recording playback
+int recorded_samples = 0;
+
+// Command flags for main loop
+volatile bool flag_record = false;
+volatile bool flag_playback = false;
+volatile bool flag_testtone = false;
+
+
+
+
+void setup()
+{
+  Serial.begin(115200);
+  while (!Serial)
+  {
+    delay(10);
+  }
+  Serial.println("ESP32 Audio System");
+
+  // setup mozzi
+  auto cfg = mozzi.defaultConfig();
+  cfg.control_rate = CONTROL_RATE;
+  cfg.copyFrom(es8388_info);
+  mozzi.begin(cfg);
+
+  Serial.println("Configuring ES8388 codec (input)...");
+  es8388_pins.addI2C(PinFunction::CODEC, ES8388_I2C_SCL, ES8388_I2C_SDA, ES8388_I2C_ADDR, ES8388_I2C_SPEED, es8388_wire);
+  es8388_pins.addI2S(PinFunction::CODEC, ES8388_I2S_MCLK, ES8388_I2S_BCLK, ES8388_I2S_LRCK, ES8388_I2S_DOUT, ES8388_I2S_DIN);
+  es8388_pins.begin();
+
+  CodecConfig cfg_i2s;
+  cfg_i2s.output_device = DAC_OUTPUT_ALL;
+  cfg_i2s.input_device = ADC_INPUT_LINE1; // or ADC_INPUT_ALL for all inputs
+  es8388_board.begin(cfg_i2s);
+
+  auto io = es8388_i2s.defaultConfig(RXTX_MODE);
+  io.copyFrom(es8388_info);
+  io.output_device = DAC_OUTPUT_ALL;
+  io.input_device = ADC_INPUT_LINE1; // Use only LINE1 (mono)
+  io.buffer_size = BUFFER_SIZE;
+  io.channels = 1; // Force mono mode
+  es8388_i2s.begin(io);
+  es8388_i2s.setVolume(1.0f);
+  es8388_i2s.setInputVolume(0.6f);
+  Serial.println("ES8388 codec configured for mono input.");
+
+  // setup mozzi sine
+  aSin.setFreq(1000); // set the frequency
+
+  delay(500);
+
+  // Play a test tone to verify the speaker is working
+  playTestTone();
+}
+
+void loop()
+{
+  copier.copy();
+
+  // Serial command parsing moved here from updateControl()
+  if (!playTone && !playRecording)
+  {
+    if (Serial.available() > 0)
+    {
+      char incomingByte = Serial.read();
+      if (incomingByte == 'r')
+      {
+        flag_record = true;
+      }
+      else if (incomingByte == 'p')
+      {
+        flag_playback = true;
+      }
+      else if (incomingByte == 't')
+      {
+        flag_testtone = true;
+      }
+    }
+  }
+
+  // Handle serial command flags in main loop
+  if (flag_record)
+  {
+    flag_record = false;
+    Serial.println("Starting recording...");
+    recordAndSendAudio();
+  }
+  if (flag_playback)
+  {
+    flag_playback = false;
+    Serial.println("Playing back recorded audio...");
+    playbackAudio();
+  }
+  if (flag_testtone)
+  {
+    flag_testtone = false;
+    Serial.println("Playing test tone...");
+    playTestTone();
+  }
+}
+
+AudioOutputMozzi updateAudio()
+{
+
+  if (playTone)
+  {
+    samples_count++;
+    return (aSin.next() * 100) >>
+           8; // shift back to STANDARD audio range, like /256 but faster
+  }
+  else if (playRecording)
+  {
+    recorded_samples++;
+    return (recordedAudio[recorded_samples - 1]) / 100;
+  }
+  else
+  {
+    return 0;
+  }
+}
+
+void updateControl()
+{
+  if (playTone)
+  {
+    if (samples_count >= duration_s * SAMPLE_RATE)
+    {
+      playTone = false;
+      Serial.println("Test tone complete.");
+    }
+  }
+  if (playRecording)
+  {
+    if (recorded_samples >= (SAMPLE_RATE * (RECORD_TIME_MS / 1000)))
+    {
+      playRecording = false;
+      Serial.println("Playback complete.");
+    }
+  }
+
+  if (!playTone && !playRecording)
+  {
+    // Optional: continue monitoring audio levels
+    readES8388Data();
+    // printAverageAmplitude();
+  }
+}
+
+// Function to play a test tone to verify speaker operation
+void playTestTone()
+{
+
+  Serial.printf("Playing %d Hz test tone for %d ms...\n", frequency, duration_s * 1000);
+
+  // Generate and play the sine wave in chunks
+  samples_count = 0;
+
+  playTone = true;
+}
+
+// Function to record audio and send it over serial
+
+void recordAndSendAudio()
+{
+  const int total_samples = SAMPLE_RATE * (RECORD_TIME_MS / 1000);
+
+  // Free any previous recording
+  if (recordedAudio != NULL)
+  {
+    free(recordedAudio);
+    recordedAudio = NULL;
+  }
+
+  // Allocate memory for new recording
+  recordedAudio = (int16_t *)malloc(total_samples * sizeof(int16_t));
+
+  if (recordedAudio == NULL)
+  {
+    Serial.println("Failed to allocate memory for audio buffer");
+    return;
+  }
+
+  size_t bytesRead = 0;
+  recordedSamples = 0;
+
+  unsigned long startTime = millis();
+  unsigned long lastSampleTime = micros();
+  const unsigned long sampleInterval = 1000000 / SAMPLE_RATE; // microseconds per sample
+
+  // Read data until we have enough samples or timeout
+  while (recordedSamples < total_samples && (millis() - startTime) < RECORD_TIME_MS + 500)
+  {
+    // ES8388 input using AudioTools
+    size_t bytesReadThisTime = es8388_i2s.readBytes((uint8_t *)&recordedAudio[recordedSamples],
+                            min((total_samples - recordedSamples) * sizeof(int16_t), BUFFER_SIZE * sizeof(int16_t)));
+    if (bytesReadThisTime > 0)
+    {
+      recordedSamples += bytesReadThisTime / sizeof(int16_t);
+      bytesRead += bytesReadThisTime;
+    }
+  }
+
+  // Run inference on the recorded audio
+  runInferenceOnRecordedAudio();
+
+  // Send header information as text
+  Serial.println("BEGIN_AUDIO");
+  Serial.println(SAMPLE_RATE);
+  Serial.println(recordedSamples);
+
+  // Send a marker to indicate binary data start
+  Serial.println("BEGIN_BINARY");
+
+  // Send the audio data as binary
+  Serial.write((uint8_t *)recordedAudio, recordedSamples * sizeof(int16_t));
+
+  // Send a text marker to indicate end
+  Serial.println();
+  Serial.println("END_AUDIO");
+  Serial.printf("Sent %d samples (%d bytes) recorded over %d ms\n",
+          recordedSamples, bytesRead, (millis() - startTime));
+
+  Serial.println("Recording saved in memory. Send 'p' to play it back.");
+
+  
+}
+
+void playbackAudio()
+{
+  if (recordedAudio == NULL)
+  {
+    Serial.println("ERROR: recordedAudio buffer is NULL");
+    return;
+  }
+
+  if (recordedSamples <= 0)
+  {
+    Serial.printf("ERROR: Invalid recordedSamples: %d\n", recordedSamples);
+    return;
+  }
+
+  Serial.printf("Playing back %d samples from buffer at %p...\n", recordedSamples, recordedAudio);
+  recorded_samples = 0;
+  playRecording = true;
+
+  //   Serial.printf("Played %d samples (%d bytes) in %d ms\n",
+  //            samplesPlayed, bytesWritten, duration);
+}
+
+void readES8388Data()
+{
+
+  int16_t rawBuffer[BUFFER_SIZE];
+  size_t bytesRead = es8388_i2s.readBytes((uint8_t *)rawBuffer, BUFFER_SIZE * sizeof(int16_t));
+  if (bytesRead == 0)
+    return;
+  int numSamples = bytesRead / sizeof(int16_t);
+  for (int i = 0; i < numSamples; i++)
+  {
+    int16_t sample = rawBuffer[i];
+    int absSample = abs(sample);
+    sumAmplitude += absSample;
+    sampleCount++;
+    if (sample < minAmplitude)
+      minAmplitude = sample;
+    if (sample > maxAmplitude)
+      maxAmplitude = sample;
+  }
+}
+
+void printAverageAmplitude()
+{
+  if (millis() - lastPrintTime >= printInterval)
+  {
+    if (sampleCount > 0)
+    {
+      int avgAmplitude = sumAmplitude / sampleCount;
+
+      Serial.printf("📊 Average Amplitude: %d | Min: %d | Max: %d\n",
+                    avgAmplitude, minAmplitude, maxAmplitude);
+
+      // Reset counters
+      sumAmplitude = 0;
+      sampleCount = 0;
+      minAmplitude = INT16_MAX;
+      maxAmplitude = INT16_MIN;
+    }
+
+    lastPrintTime = millis();
+  }
+}
+
+// Edge Impulse: required function to provide data to the classifier
 int raw_feature_get_data(size_t offset, size_t length, float *out_ptr)
 {
   memcpy(out_ptr, features + offset, length * sizeof(float));
   return 0;
 }
 
-// Function to extract features from WAV file with min-max scaling
-bool extractFeaturesFromWav(const char *filename, float *features, size_t feature_size)
+// Convert int16_t audio buffer to float features with min-max normalization
+bool extractFeaturesFromBuffer(const int16_t *audio, size_t audio_len, float *features, size_t feature_size)
 {
-  File wavFile = SD.open(filename);
-  if (!wavFile)
-  {
-    Serial.printf("Failed to open file: %s\n", filename);
-    return false;
-  }
-
-  // Skip WAV header (44 bytes)
-  wavFile.seek(44);
-
-  // Buffer for reading
-  const int buffer_size = 512;
-  int16_t buffer[buffer_size];
-
-  // First pass: find min and max values for scaling
+  // Find min and max
   int16_t min_val = INT16_MAX;
   int16_t max_val = INT16_MIN;
-  size_t total_samples = 0;
-
-  while (wavFile.available() && total_samples < feature_size)
+  for (size_t i = 0; i < audio_len; i++)
   {
-    int bytesRead = wavFile.read((uint8_t *)buffer, min(buffer_size * sizeof(int16_t), (feature_size - total_samples) * sizeof(int16_t)));
-    int samples_read = bytesRead / sizeof(int16_t);
-    for (int i = 0; i < samples_read; i++)
-    {
-      if (buffer[i] < min_val)
-        min_val = buffer[i];
-      if (buffer[i] > max_val)
-        max_val = buffer[i];
-    }
-    total_samples += samples_read;
+    if (audio[i] < min_val)
+      min_val = audio[i];
+    if (audio[i] > max_val)
+      max_val = audio[i];
   }
-
-  // Avoid division by zero if the audio is silent
   if (min_val == max_val)
   {
     min_val = -1;
     max_val = 1;
   }
-
-  // Reset file position to beginning of audio data
-  wavFile.seek(44);
-
-  // Second pass: apply min-max scaling to normalize the audio
-  size_t feature_idx = 0;
-  while (wavFile.available() && feature_idx < feature_size)
+  // Normalize and copy to features
+  size_t i = 0;
+  for (; i < audio_len && i < feature_size; i++)
   {
-    int bytesRead = wavFile.read((uint8_t *)buffer, min(buffer_size * sizeof(int16_t), (feature_size - feature_idx) * sizeof(int16_t)));
-    int samples_read = bytesRead / sizeof(int16_t);
-    for (int i = 0; i < samples_read && feature_idx < feature_size; i++)
-    {
-      float sample = buffer[i];
-      // Normalization can be added here if needed
-      features[feature_idx++] = sample;
-    }
+    float sample = audio[i];
+    // Min-max normalization to [-1, 1]
+    float norm = (sample - min_val) / (float)(max_val - min_val) * 2.0f - 1.0f;
+    features[i] = norm;
   }
-  // Fill remaining features with zeros if file is shorter than needed
-  while (feature_idx < feature_size)
+  // Zero-pad if needed
+  for (; i < feature_size; i++)
   {
-    features[feature_idx++] = 0.0f;
+    features[i] = 0.0f;
   }
-
-  wavFile.close();
   return true;
 }
 
-
-// --- Persistent Index Functions ---
-
-// Save a vector of file paths as a text index file
-bool saveIndexFile(const char *indexPath, const std::vector<String> &files)
+// Run inference on the recorded audio buffer
+void runInferenceOnRecordedAudio()
 {
-  File idx = SD.open(indexPath, FILE_WRITE);
-  if (!idx)
+  if (!recordedAudio || recordedSamples <= 0)
   {
-    Serial.printf("Failed to open index file for writing: %s\n", indexPath);
-    return false;
+    Serial.println("No audio recorded for inference.");
+    return;
   }
-  for (const auto &f : files)
+  if (!features)
   {
-    idx.println(f);
-  }
-  idx.close();
-  return true;
-}
-
-// Load a vector of file paths from a text index file
-std::vector<String> loadIndexFile(const char *indexPath)
-{
-  std::vector<String> files;
-  File idx = SD.open(indexPath, FILE_READ);
-  if (!idx)
-  {
-    Serial.printf("Failed to open index file for reading: %s\n", indexPath);
-    return files;
-  }
-  while (idx.available())
-  {
-    String line = idx.readStringUntil('\n');
-    line.trim();
-    if (line.length() > 0)
-      files.push_back(line);
-  }
-  idx.close();
-  return files;
-}
-
-// Scan SD directory for .wav files
-std::vector<String> getFilesInDir(const char *dirname)
-{
-  std::vector<String> files;
-  File root = SD.open(dirname);
-  if (!root || !root.isDirectory())
-  {
-    Serial.printf("Failed to open directory: %s\n", dirname);
-    return files;
-  }
-  File file = root.openNextFile();
-  while (file)
-  {
-    if (!file.isDirectory() && String(file.name()).endsWith(".wav"))
+    features = (float *)malloc(EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE * sizeof(float));
+    if (!features)
     {
-      files.push_back(String(dirname) + "/" + String(file.name()));
-    }
-    file = root.openNextFile();
-  }
-  root.close();
-  Serial.printf("Found %d WAV files in %s folder\n", files.size(), dirname);
-  return files;
-}
-
-// Build or load index, depending on forceRebuild and file existence
-std::vector<String> getIndexedFiles(const char *folder, const char *indexFile, bool forceRebuild)
-{
-  std::vector<String> files;
-  if (!forceRebuild && SD.exists(indexFile))
-  {
-    Serial.printf("Loading index file: %s\n", indexFile);
-    files = loadIndexFile(indexFile);
-  }
-  if (forceRebuild || files.empty())
-  {
-    Serial.printf("Building index for folder: %s\n", folder);
-    files = getFilesInDir(folder);
-    if (!saveIndexFile(indexFile, files))
-    {
-      Serial.printf("Warning: Failed to save index file: %s\n", indexFile);
+      Serial.println("Failed to allocate features buffer");
+      return;
     }
   }
-  return files;
-}
-
-// --- WAV Loading and Inference Functions ---
-
-bool loadWavFile(const char *filename, float *buffer, int maxSamples)
-{
-  File wavFile = SD.open(filename);
-  if (!wavFile)
+  // Timing: feature extraction
+  unsigned long t_feat_start = micros();
+  bool feat_ok = extractFeaturesFromBuffer(recordedAudio, recordedSamples, features, EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE);
+  unsigned long t_feat_end = micros();
+  float feat_time_ms = (t_feat_end - t_feat_start) / 1000.0f;
+  if (!feat_ok)
   {
-    Serial.printf("Failed to open file: %s\n", filename);
-    return false;
+    Serial.println("Feature extraction failed");
+    return;
   }
-
-  // Read WAV header (44 bytes)
-  uint8_t header[WAV_HEADER_SIZE];
-  wavFile.read(header, WAV_HEADER_SIZE);
-
-  // Quick check if this is a valid WAV file
-  if (header[0] != 'R' || header[1] != 'I' || header[2] != 'F' || header[3] != 'F' ||
-      header[8] != 'W' || header[9] != 'A' || header[10] != 'V' || header[11] != 'E')
-  {
-    Serial.printf("Not a valid WAV file: %s\n", filename);
-    wavFile.close();
-    return false;
-  }
-
-  // Parse number of channels from header
-  uint16_t numChannels = header[22] | (header[23] << 8);
-
-  // Parse sample rate from header
-  uint32_t sampleRate = header[24] | (header[25] << 8) |
-                        (header[26] << 16) | (header[27] << 24);
-
-  // Parse bits per sample from header
-  uint16_t bitsPerSample = header[34] | (header[35] << 8);
-
-  Serial.printf("File: %s, Channels: %d, Sample Rate: %d, Bits/Sample: %d\n",
-                filename, numChannels, sampleRate, bitsPerSample);
-  // Verify format is compatible
-  if (numChannels != 1)
-  {
-    Serial.println("Only mono WAV files are supported");
-    wavFile.close();
-    return false;
-  }
-
-  // Read audio data
-  int bytesPerSample = bitsPerSample / 8;
-  int samplesRead = 0;
-  uint8_t sampleBytes[4]; // Max 32-bit samples
-
-  // First pass: find min and max values for scaling
-  int32_t min_val = INT32_MAX;
-  int32_t max_val = INT32_MIN;
-  int32_t sample;
-
-  while (wavFile.available() && samplesRead < maxSamples)
-  {
-    wavFile.read(sampleBytes, bytesPerSample);
-    // Convert bytes to sample value based on bit depth
-    if (bitsPerSample == 8)
-    {
-      sample = sampleBytes[0] - 128;
-    }
-    else if (bitsPerSample == 16)
-    {
-      sample = (int16_t)(sampleBytes[0] | (sampleBytes[1] << 8));
-    }
-    else if (bitsPerSample == 24)
-    {
-      sample = (sampleBytes[0] | (sampleBytes[1] << 8) | (sampleBytes[2] << 16));
-      if (sample & 0x800000)
-        sample |= 0xFF000000; // Sign extend
-    }
-    else if (bitsPerSample == 32)
-    {
-      sample = (sampleBytes[0] | (sampleBytes[1] << 8) |
-                (sampleBytes[2] << 16) | (sampleBytes[3] << 24));
-    }
-    else
-    {
-      Serial.printf("Unsupported bits per sample: %d\n", bitsPerSample);
-      wavFile.close();
-      return false;
-    }
-    // Update min/max
-    if (sample < min_val)
-      min_val = sample;
-    if (sample > max_val)
-      max_val = sample;
-    samplesRead++;
-  }
-
-  // Avoid division by zero if the audio is silent
-  if (min_val == max_val)
-  {
-    Serial.println("Warning: Audio file has no variation (possibly silent)");
-    min_val = -1;
-    max_val = 1;
-  }
-
-  // Reset file position to beginning of audio data
-  wavFile.seek(WAV_HEADER_SIZE);
-
-  // Second pass: read and normalize samples
-  samplesRead = 0;
-  while (wavFile.available() && samplesRead < maxSamples)
-  {
-    wavFile.read(sampleBytes, bytesPerSample);
-    // Convert bytes to sample value based on bit depth
-    if (bitsPerSample == 8)
-    {
-      sample = sampleBytes[0] - 128;
-    }
-    else if (bitsPerSample == 16)
-    {
-      sample = (int16_t)(sampleBytes[0] | (sampleBytes[1] << 8));
-    }
-    else if (bitsPerSample == 24)
-    {
-      sample = (sampleBytes[0] | (sampleBytes[1] << 8) | (sampleBytes[2] << 16));
-      if (sample & 0x800000)
-        sample |= 0xFF000000; // Sign extend
-    }
-    else if (bitsPerSample == 32)
-    {
-      sample = (sampleBytes[0] | (sampleBytes[1] << 8) |
-                (sampleBytes[2] << 16) | (sampleBytes[3] << 24));
-    }
-    // Normalize sample to [-1, 1] based on min/max values
-    float normalized_value;
-    if (sample < 0)
-    {
-      normalized_value = (min_val != 0) ? (float)sample / abs(min_val) : 0;
-    }
-    else
-    {
-      normalized_value = (max_val != 0) ? (float)sample / max_val : 0;
-    }
-    // Ensure value is within [-1, 1]
-    normalized_value = constrain(normalized_value, -1.0f, 1.0f);
-    buffer[samplesRead++] = normalized_value;
-  }
-  // Fill remaining buffer with zeros if file is shorter than maxSamples
-  while (samplesRead < maxSamples)
-  {
-    buffer[samplesRead++] = 0.0f;
-  }
-  wavFile.close();
-  return true;
-}
-
-void printStatistics()
-{
-  Serial.println("\n----- Current Statistics -----");
-  int total_samples = stats.total_bird_samples + stats.total_nobird_samples;
-  int total_correct = stats.correct_bird_predictions + stats.correct_nobird_predictions;
-  Serial.printf("Bird samples: %d, correctly identified: %d (%.2f%%)\n",
-                stats.total_bird_samples,
-                stats.correct_bird_predictions,
-                stats.total_bird_samples > 0 ? (float)stats.correct_bird_predictions * 100 / stats.total_bird_samples : 0);
-  Serial.printf("No-bird samples: %d, correctly identified: %d (%.2f%%)\n",
-                stats.total_nobird_samples,
-                stats.correct_nobird_predictions,
-                stats.total_nobird_samples > 0 ? (float)stats.correct_nobird_predictions * 100 / stats.total_nobird_samples : 0);
-  Serial.printf("Overall accuracy: %.2f%% (%d of %d correct)\n",
-                total_samples > 0 ? (float)total_correct * 100 / total_samples : 0,
-                total_correct,
-                total_samples);
-  if (total_samples > 0)
-  {
-    Serial.printf("Inference timing - Avg: %.3f s, Min: %.3f s, Max: %.3f s\n",
-                  (stats.total_inference_time / total_samples) / 1000000.0f,
-                  stats.min_inference_time / 1000000.0f,
-                  stats.max_inference_time / 1000000.0f);
-    Serial.printf("Loading timing - Avg: %.3f s, Min: %.3f s, Max: %.3f s\n",
-                  (stats.total_loading_time / total_samples) / 1000000.0f,
-                  stats.min_loading_time / 1000000.0f,
-                  stats.max_loading_time / 1000000.0f);
-  }
-  Serial.println("------------------------------\n");
-}
-
-bool runInferenceOnFile(const char *filename, bool is_bird_sample)
-{
-  Serial.printf("Processing file: %s\n", filename);
-  unsigned long loading_start_time = micros();
-  unsigned long loading_time = 0;
-  unsigned long inference_time = 0;
-  bool predicted_as_bird = false;
-  bool is_correct = false;
-
-
-  // Edge Impulse inference
-  if (!extractFeaturesFromWav(filename, features, EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE))
-  {
-    return false;
-  }
-  loading_time = micros() - loading_start_time;
-  // Set up signal for inferencing
-  signal_t signal;
+  // Timing: inference
+  signal_t_ei signal;
   signal.total_length = EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE;
-  signal.get_data = &raw_feature_get_data;
-  // Run the impulse
-  unsigned long inference_start_time = micros();
+  signal.get_data = [](size_t offset, size_t length, float *out_ptr) {
+    return raw_feature_get_data(offset, length, out_ptr);
+  };
   ei_impulse_result_t result = {0};
+  unsigned long t_inf_start = micros();
   EI_IMPULSE_ERROR res = run_classifier(&signal, &result, false);
+  unsigned long t_inf_end = micros();
+  float inf_time_ms = (t_inf_end - t_inf_start) / 1000.0f;
   if (res != EI_IMPULSE_OK)
   {
     Serial.printf("ERR: Failed to run classifier (%d)\n", res);
-    return false;
+    return;
   }
-  inference_time = micros() - inference_start_time;
-  // Get prediction (assuming binary classification with "bird" class)
+  // Find bird class index
   float bird_score = 0.0f;
   int bird_index = -1;
   for (size_t ix = 0; ix < EI_CLASSIFIER_LABEL_COUNT; ix++)
@@ -457,140 +485,6 @@ bool runInferenceOnFile(const char *filename, bool is_bird_sample)
     bird_score = result.classification[0].value;
     Serial.println("Warning: No 'bird' class found, using first class as bird");
   }
-  predicted_as_bird = (bird_score > 0.5); // Adjust threshold if needed
-  is_correct = (predicted_as_bird == is_bird_sample);
-
-
-  // Update loading time statistics
-  stats.total_loading_time += loading_time;
-  if (stats.first_measurement || loading_time < stats.min_loading_time)
-  {
-    stats.min_loading_time = loading_time;
-  }
-  if (stats.first_measurement || loading_time > stats.max_loading_time)
-  {
-    stats.max_loading_time = loading_time;
-  }
-  // Update inference time statistics
-  stats.total_inference_time += inference_time;
-  if (stats.first_measurement || inference_time < stats.min_inference_time)
-  {
-    stats.min_inference_time = inference_time;
-  }
-  if (stats.first_measurement || inference_time > stats.max_inference_time)
-  {
-    stats.max_inference_time = inference_time;
-  }
-  // Clear first measurement flag after first update
-  stats.first_measurement = false;
-  // Update classification statistics
-  if (is_bird_sample)
-  {
-    stats.total_bird_samples++;
-    if (is_correct)
-      stats.correct_bird_predictions++;
-  }
-  else
-  {
-    stats.total_nobird_samples++;
-    if (is_correct)
-      stats.correct_nobird_predictions++;
-  }
-  // Print prediction results
-  Serial.printf("Prediction: %s\n", predicted_as_bird ? "BIRD" : "NO_BIRD");
-  Serial.printf("Ground truth: %s, Prediction %s\n",
-                is_bird_sample ? "BIRD" : "NO_BIRD",
-                is_correct ? "CORRECT" : "INCORRECT");
-  Serial.printf("Loading time: %.3f s\n", loading_time / 1000000.0f);
-  Serial.printf("Inference time: %.3f s\n", inference_time / 1000000.0f);
-  return true;
-}
-
-void setup()
-{
-  // Initialize serial communication
-  Serial.begin(115200);
-  while (!Serial)
-  {
-    ;
-  }
-
-
-  Serial.println("Starting Audio Inference using Edge Impulse model");
-
-
-  // Check PSRAM availability
-  Serial.print("Total heap: ");
-  Serial.println(ESP.getHeapSize());
-  Serial.print("Free heap: ");
-  Serial.println(ESP.getFreeHeap());
-  Serial.print("Total PSRAM: ");
-  Serial.println(ESP.getPsramSize());
-  Serial.print("Free PSRAM: ");
-  Serial.println(ESP.getFreePsram());
-  if (ESP.getPsramSize() == 0)
-  {
-    Serial.println("PSRAM not available or not enabled in IDE!");
-    while (1)
-      ;
-  }
-
-  // Initialize SD card
-  if (!SD.begin(SD_CS))
-  {
-    Serial.println("SD Card initialization failed!");
-    while (1)
-      ;
-  }
-  Serial.println("SD Card initialized successfully");
-
-
-  features = (float *)ps_malloc(EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE * sizeof(float));
-  if (features == NULL)
-  {
-    Serial.println("Failed to allocate memory in PSRAM for features");
-    while (1)
-      ;
-  }
-  Serial.println("Successfully allocated features array in PSRAM");
-
-
-  // --- Persistent index logic ---
-  bool forceRebuild = false; // Set true to force index rebuild on next boot
-  std::vector<String> birdFiles = getIndexedFiles(BIRD_FOLDER, BIRD_INDEX_FILE, forceRebuild);
-  std::vector<String> noBirdFiles = getIndexedFiles(NO_BIRD_FOLDER, NO_BIRD_INDEX_FILE, forceRebuild);
-
-  // Determine how many files to process
-  size_t max_files = min(birdFiles.size(), noBirdFiles.size());
-  if (max_files == 0)
-  {
-    Serial.println("No files found in one or both folders");
-  }
-  else
-  {
-    Serial.printf("Will process %d files from each folder\n", max_files);
-    for (size_t i = 0; i < max_files; i++)
-    {
-      runInferenceOnFile(birdFiles[i].c_str(), true);
-      runInferenceOnFile(noBirdFiles[i].c_str(), false);
-      if ((i + 1) % 5 == 0 || i == max_files - 1)
-      {
-        printStatistics();
-      }
-    }
-  }
-  Serial.println("\n===== FINAL STATISTICS =====");
-  printStatistics();
-
-
-  // Free input data buffer
-  free(input_data);
-
-
-  Serial.println("Testing complete");
-}
-
-void loop()
-{
-  delay(1000);
+  Serial.printf("Inference result: %s (score: %.3f) | Feature extraction: %.2f ms | Inference: %.2f ms\n",
+    bird_score > score_threshold ? "BIRD" : "NO_BIRD", bird_score, feat_time_ms, inf_time_ms);
 }

@@ -143,7 +143,7 @@ void loop()
     }
 
     // Turn the raw buffer in a signal which we can the classify
-    signal_t signal;
+    signal_t_ei signal;
     int err = numpy::signal_from_buffer(buffer, EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE, &signal);
     if (err != 0) {
         ei_printf("ERR:(%d)\r\n", err);

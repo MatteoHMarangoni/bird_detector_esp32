@@ -44,13 +44,13 @@ using namespace ei;
 
 class SignalWithRange {
 public:
-    SignalWithRange(signal_t *original_signal, uint32_t range_start, uint32_t range_end):
+    SignalWithRange(signal_t_ei *original_signal, uint32_t range_start, uint32_t range_end):
         _original_signal(original_signal), _range_start(range_start), _range_end(range_end)
     {
 
     }
 
-    signal_t * get_signal() {
+    signal_t_ei * get_signal() {
         if (this->_range_start == 0 && this->_range_end == this->_original_signal->total_length) {
             return this->_original_signal;
         }
@@ -71,10 +71,10 @@ public:
     }
 
 private:
-    signal_t *_original_signal;
+    signal_t_ei *_original_signal;
     uint32_t _range_start;
     uint32_t _range_end;
-    signal_t wrapped_signal;
+    signal_t_ei wrapped_signal;
 };
 
 #endif // #if !EIDSP_SIGNAL_C_FN_POINTER

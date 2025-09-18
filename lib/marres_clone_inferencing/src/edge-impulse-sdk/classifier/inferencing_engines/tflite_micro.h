@@ -263,7 +263,7 @@ static EI_IMPULSE_ERROR inference_tflite_run(
  */
 EI_IMPULSE_ERROR run_nn_inference_from_dsp(
     ei_learning_block_config_tflite_graph_t *config,
-    signal_t *signal,
+    signal_t_ei *signal,
     matrix_t *output_matrix)
 {
     TfLiteTensor* input;
@@ -438,7 +438,7 @@ EI_IMPULSE_ERROR run_nn_inference(
  */
 EI_IMPULSE_ERROR run_nn_inference_image_quantized(
     const ei_impulse_t *impulse,
-    signal_t *signal,
+    signal_t_ei *signal,
     uint32_t learn_block_index,
     ei_impulse_result_t *result,
     void *config_ptr,
@@ -567,7 +567,7 @@ EI_IMPULSE_ERROR run_nn_inference_image_quantized(
 }
 #endif // EI_CLASSIFIER_QUANTIZATION_ENABLED == 1
 
-__attribute__((unused)) int extract_tflite_features(signal_t *signal, matrix_t *output_matrix, void *config_ptr, const float frequency) {
+__attribute__((unused)) int extract_tflite_features(signal_t_ei *signal, matrix_t *output_matrix, void *config_ptr, const float frequency) {
     ei_dsp_config_tflite_t *dsp_config = (ei_dsp_config_tflite_t*)config_ptr;
 
     ei_config_tflite_graph_t ei_config_tflite_graph_0 = {
