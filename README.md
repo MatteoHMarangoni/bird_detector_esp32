@@ -10,11 +10,11 @@ The ESP32 code can be used together with the python script audio_receiver_and_pl
 
 How to use:
 
-0.1 Have vscode with platformio installed
-0.2 install a python environment and install the libraries from python_script/requirements.txt
+0.1 Have vscode with platformio installed.
+0.2 install a python environment and install the libraries from python_script/requirements.txt.
 0.2.1 If an error occurs that serial is not recognized, the library pyserial should be installed via pip install pyserial.
 
-1. compile and upload code to esp32
+1. compile and upload code to esp32.
 1.1 detection threshold can be changed by changing line 24 in src/main.cpp: float score_threshold = 0.5f; Anything over will be labeled bird anything under or equal will be labeled no bird.
 1.2 optionally, change line 22 in src/main.cpp: int gain = 10; to adjust the microphone input gain if it is too loud or quiet.
 2. Change the port in line 12 of python_script/audio_receiver_playback.py to match the port of the esp32 on your device. example: DEFAULT_PORT = "COM9"
