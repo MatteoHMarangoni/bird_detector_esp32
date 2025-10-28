@@ -9,7 +9,7 @@ from datetime import datetime
 import numpy as np
 
 # Default serial port - change this to match your ESP32 connection
-DEFAULT_PORT = "COM9"
+DEFAULT_PORT = "COM7"
 
 
 def compute_dominant_frequency(samples, sample_rate):
