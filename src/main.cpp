@@ -3,11 +3,17 @@
 #include <Arduino.h>
 #include <driver/i2s.h>
 #include <Wire.h>
+#include <esp_heap_caps.h>
+#include <math.h>
 
 // --- Configuration constants ---
 #define SAMPLE_RATE 16000        // 16 kHz
-#define RECORD_TIME_MS 2000      // 2 seconds
+#define RECORD_TIME_MS 3000      // 3 seconds
 #define BUFFER_SIZE 1024         // samples per chunk
+// Software gain to apply to samples (in dB). Set to 0.0 for no change.
+#define AUDIO_GAIN_DB 10.0f
+// Warm-up time in milliseconds to let the ADC/I2S settle before capturing
+#define WARMUP_MS 1000
 
 // --- ES8388 pins (keep your board mapping) ---
 #define ES8388_I2C_SDA 8
@@ -106,9 +112,11 @@ static void i2s_init_rx() {
             .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT, // capture mono from left
             .communication_format = I2S_COMM_FORMAT_STAND_I2S,
             .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-            .dma_buf_count = 8,
-            .dma_buf_len = 256,
-            .use_apll = false,
+            // increase DMA buffering to avoid underruns while serial is sending
+            .dma_buf_count = 12,
+            .dma_buf_len = 1024,
+            // use APLL where available for stable clock generation
+            .use_apll = true,
             .tx_desc_auto_clear = false,
             .fixed_mclk = 0};
 
@@ -128,29 +136,120 @@ static void i2s_init_rx() {
 
 // --- Recording and serial streaming ---
 static void recordAndSendAudio() {
-    const int total_samples = SAMPLE_RATE * (RECORD_TIME_MS / 1000);
+    const int total_samples = (SAMPLE_RATE * RECORD_TIME_MS) / 1000;
 
-    // Announce header for Python receiver
+    const size_t total_bytes = (size_t)total_samples * sizeof(int16_t);
+
+    // Try to allocate a contiguous buffer in PSRAM for the entire recording.
+    // If PSRAM isn't available or allocation fails, fall back to streaming mode.
+    int16_t *psram_buf = nullptr;
+    if (total_bytes > 0) {
+        psram_buf = (int16_t *)heap_caps_malloc(total_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (psram_buf) {
+            Serial.println("Using PSRAM buffer for full capture");
+        } else {
+            // Serial.println("PSRAM buffer unavailable, using streaming mode");
+        }
+    }
+
+    // Zero DMA buffer and perform a short warm-up read to let ADC/I2S settle
+    i2s_zero_dma_buffer(I2S_PORT);
+    const size_t warmup_samples = (size_t)((SAMPLE_RATE * WARMUP_MS) / 1000);
+    if (warmup_samples > 0) {
+        int16_t warmbuf[BUFFER_SIZE];
+        size_t warmed = 0;
+        while (warmed < warmup_samples) {
+            size_t to_read = min((size_t)BUFFER_SIZE, warmup_samples - warmed);
+            size_t bytes_read = 0;
+            esp_err_t ok = i2s_read(I2S_PORT, warmbuf, to_read * sizeof(int16_t), &bytes_read, pdMS_TO_TICKS(100));
+            if (ok != ESP_OK || bytes_read == 0) {
+                // If no data yet, wait a bit
+                delay(5);
+            } else {
+                warmed += (bytes_read / sizeof(int16_t));
+            }
+        }
+        // small pause
+        delay(5);
+    }
+
+    // Announce header for Python receiver (after warm-up so data starts immediately)
     Serial.println("BEGIN_AUDIO");
     Serial.println(SAMPLE_RATE);
     Serial.println(total_samples);
     Serial.println("BEGIN_BINARY");
 
-    // Stream samples in chunks directly to serial to avoid big mallocs
-    int samples_sent = 0;
-    int16_t buf[BUFFER_SIZE];
-    while (samples_sent < total_samples) {
-        size_t to_read = min(BUFFER_SIZE, total_samples - samples_sent);
-        size_t bytes_read = 0;
-        // Read mono 16-bit samples
-        esp_err_t ok = i2s_read(I2S_PORT, buf, to_read * sizeof(int16_t), &bytes_read, portMAX_DELAY);
-        if (ok != ESP_OK || bytes_read == 0) {
-            // if read fails, pad with zeros to keep framing
-            memset(buf, 0, to_read * sizeof(int16_t));
-            bytes_read = to_read * sizeof(int16_t);
+    if (psram_buf) {
+        // compute gain factor from dB
+        const float gain_factor = powf(10.0f, (AUDIO_GAIN_DB) / 20.0f);
+        // Read entire recording into PSRAM buffer, then send it in chunks.
+        size_t samples_filled = 0;
+        while (samples_filled < (size_t)total_samples) {
+            size_t to_read = min((size_t)BUFFER_SIZE, (size_t)total_samples - samples_filled);
+            size_t bytes_read = 0;
+            esp_err_t ok = i2s_read(I2S_PORT, psram_buf + samples_filled, to_read * sizeof(int16_t), &bytes_read, portMAX_DELAY);
+            if (ok != ESP_OK || bytes_read == 0) {
+                // pad with zeros
+                memset(psram_buf + samples_filled, 0, to_read * sizeof(int16_t));
+                bytes_read = to_read * sizeof(int16_t);
+            }
+            samples_filled += (bytes_read / sizeof(int16_t));
         }
-        Serial.write((uint8_t *)buf, bytes_read);
-        samples_sent += (bytes_read / sizeof(int16_t));
+
+        // Apply software gain (in-place) with clipping
+        if (AUDIO_GAIN_DB != 0.0f) {
+            for (size_t i = 0; i < (size_t)total_samples; ++i) {
+                int32_t v = (int32_t)((float)psram_buf[i] * gain_factor);
+                if (v > 32767) v = 32767;
+                else if (v < -32768) v = -32768;
+                psram_buf[i] = (int16_t)v;
+            }
+        }
+
+        // Send header then send buffer in chunks to avoid huge Serial.write calls
+        const size_t send_chunk_bytes = 4096;
+        size_t bytes_sent = 0;
+        while (bytes_sent < total_bytes) {
+            size_t chunk = min(send_chunk_bytes, total_bytes - bytes_sent);
+            Serial.write(((uint8_t *)psram_buf) + bytes_sent, chunk);
+            bytes_sent += chunk;
+            // small yield to allow UART to flush
+            delay(1);
+        }
+        // Ensure all UART bytes are transmitted before signalling end
+        Serial.flush();
+        // free PSRAM buffer
+        heap_caps_free(psram_buf);
+    } else {
+        // Stream samples in chunks directly to serial to avoid big mallocs
+        int samples_sent = 0;
+        int16_t buf[BUFFER_SIZE];
+        while (samples_sent < total_samples) {
+            size_t to_read = min(BUFFER_SIZE, total_samples - samples_sent);
+            size_t bytes_read = 0;
+            // Read mono 16-bit samples
+            esp_err_t ok = i2s_read(I2S_PORT, buf, to_read * sizeof(int16_t), &bytes_read, portMAX_DELAY);
+            if (ok != ESP_OK || bytes_read == 0) {
+                // if read fails, pad with zeros to keep framing
+                memset(buf, 0, to_read * sizeof(int16_t));
+                bytes_read = to_read * sizeof(int16_t);
+            }
+            // Apply software gain per-sample before sending
+            if (AUDIO_GAIN_DB != 0.0f) {
+                const float gain_factor_stream = powf(10.0f, (AUDIO_GAIN_DB) / 20.0f);
+                size_t samples_read = bytes_read / sizeof(int16_t);
+                for (size_t si = 0; si < samples_read; ++si) {
+                    int32_t vv = (int32_t)((float)buf[si] * gain_factor_stream);
+                    if (vv > 32767) vv = 32767;
+                    else if (vv < -32768) vv = -32768;
+                    buf[si] = (int16_t)vv;
+                }
+            }
+            Serial.write((uint8_t *)buf, bytes_read);
+            samples_sent += (bytes_read / sizeof(int16_t));
+        }
+        // Ensure UART transmits remaining bytes before printing end marker
+        Serial.flush();
     }
 
     Serial.println();
@@ -158,7 +257,8 @@ static void recordAndSendAudio() {
 }
 
 void setup() {
-    Serial.begin(115200);
+    // Use a higher baud for faster transfers (ensure host matches this)
+    Serial.begin(921600);
     while (!Serial) {
         delay(10);
     }
@@ -179,6 +279,25 @@ void loop() {
         if (cmd == 'r') {
             Serial.println("Starting recording...");
             recordAndSendAudio();
+        } else if (cmd == 'c') {
+            // Start continuous mode: record-send-record-send...
+            Serial.println("Starting continuous recording (send 's' to stop)...");
+            while (true) {
+                // If stop command received, break
+                if (Serial.available() > 0) {
+                    char in = Serial.read();
+                    if (in == 's') {
+                        Serial.println("Stopping continuous recording");
+                        break;
+                    }
+                }
+                recordAndSendAudio();
+                // small pause to allow host to process and to check for stop
+                delay(10);
+            }
+        } else if (cmd == 's') {
+            // Stop command - useful if continuous was started from host
+            Serial.println("Stop command received (not in continuous mode)");
         } else if (cmd == 'p') {
             Serial.println("Playback not implemented in ADC-only mode");
         }
