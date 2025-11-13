@@ -9,7 +9,7 @@ from datetime import datetime
 import numpy as np
 
 # Default serial port and baud - change these to match your ESP32 connection
-DEFAULT_PORT = "COM3"
+DEFAULT_PORT = "/dev/cu.usbmodem14401"
 DEFAULT_BAUD = 921600
 
 
@@ -31,7 +31,7 @@ def compute_dominant_frequency(samples, sample_rate):
     fft_magnitude[0] = 0
     # Find the peak frequency
     peak_index = np.argmax(fft_magnitude)
-    freqs = np.fft.rfftfreq(len(samples), d=1.0/sample_rate)
+    freqs = np.fft.rfftfreq(len(samples), d=1.0 / sample_rate)
     dominant_freq = freqs[peak_index]
     return dominant_freq
 
@@ -40,6 +40,7 @@ def compute_dominant_frequency(samples, sample_rate):
 class SerialManager:
     def __init__(self, port, baudrate, timeout=30):
         import serial
+
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
@@ -47,11 +48,9 @@ class SerialManager:
 
     def open(self):
         if self.ser is None or not self.ser.is_open:
-            self.ser = serial.Serial(
-                self.port, self.baudrate, timeout=self.timeout)
+            self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
             time.sleep(2)  # Allow time for connection to stabilize
-            print(
-                f"[SerialManager] Connected to {self.port} at {self.baudrate} baud")
+            print(f"[SerialManager] Connected to {self.port} at {self.baudrate} baud")
 
     def close(self):
         if self.ser and self.ser.is_open:
@@ -111,8 +110,7 @@ def ensure_recordings_dir():
     recordings_dir = "recordings"
     if not os.path.exists(recordings_dir):
         os.makedirs(recordings_dir)
-        print(
-            f"Created recordings directory: {os.path.abspath(recordings_dir)}")
+        print(f"Created recordings directory: {os.path.abspath(recordings_dir)}")
     return recordings_dir
 
 
@@ -144,17 +142,17 @@ def record_audio(serial_mgr, output_file=None, playback=False):
         output_file = get_timestamped_filename(recordings_dir)
 
     try:
-
         # Send command to start recording
-        serial_mgr.write(b'r')
+        serial_mgr.write(b"r")
         print("Sent recording command to ESP32")
 
         # --- Parse ESP32 messages for inference result (before BEGIN_AUDIO) ---
         classification = None
         score = None
         import re
+
         while True:
-            line = serial_mgr.readline().decode('utf-8', errors='replace').strip()
+            line = serial_mgr.readline().decode("utf-8", errors="replace").strip()
             if not line:
                 print("Timeout waiting for recording to start")
                 return
@@ -163,20 +161,22 @@ def record_audio(serial_mgr, output_file=None, playback=False):
             print(f"ESP32: {line}")
             if line.startswith("Inference result:"):
                 m = re.search(
-                    r"Inference result: (BIRD|NO_BIRD) \(score: ([0-9.]+)\)", line)
+                    r"Inference result: (BIRD|NO_BIRD) \(score: ([0-9.]+)\)", line
+                )
                 if m:
                     classification = m.group(1)
                     score = m.group(2)
 
         # Read header information
-        sample_rate = int(serial_mgr.readline().decode('utf-8').strip())
-        num_samples = int(serial_mgr.readline().decode('utf-8').strip())
+        sample_rate = int(serial_mgr.readline().decode("utf-8").strip())
+        num_samples = int(serial_mgr.readline().decode("utf-8").strip())
 
         print(
-            f"Recording started. Sample rate: {sample_rate}Hz, Expected samples: {num_samples}")
+            f"Recording started. Sample rate: {sample_rate}Hz, Expected samples: {num_samples}"
+        )
 
         # Wait for binary data marker
-        line = serial_mgr.readline().decode('utf-8').strip()
+        line = serial_mgr.readline().decode("utf-8").strip()
         if line != "BEGIN_BINARY":
             raise ValueError(f"Expected 'BEGIN_BINARY', got '{line}'")
 
@@ -196,28 +196,31 @@ def record_audio(serial_mgr, output_file=None, playback=False):
         binary_data = read_exact(serial_mgr, expected_bytes, overall_timeout)
         if len(binary_data) < expected_bytes:
             print(
-                f"Warning: expected {expected_bytes} bytes but received {len(binary_data)} bytes")
+                f"Warning: expected {expected_bytes} bytes but received {len(binary_data)} bytes"
+            )
 
         # Read the end marker
         serial_mgr.readline()  # Read the newline after binary data
-        line = serial_mgr.readline().decode('utf-8', errors='replace').strip()
+        line = serial_mgr.readline().decode("utf-8", errors="replace").strip()
         if line != "END_AUDIO":
             print(f"Warning: Expected 'END_AUDIO', got '{line}'")
 
         duration = time.time() - start_time
         print(
-            f"Received {len(binary_data)//2} samples ({len(binary_data)} bytes) in {duration:.2f} seconds")
+            f"Received {len(binary_data) // 2} samples ({len(binary_data)} bytes) in {duration:.2f} seconds"
+        )
 
         # --- Also parse any remaining ESP32 messages for inference result (after audio) ---
         status_messages = []
         while serial_mgr.in_waiting:
-            msg = serial_mgr.readline().decode('utf-8', errors='replace').strip()
+            msg = serial_mgr.readline().decode("utf-8", errors="replace").strip()
             if msg:
                 status_messages.append(msg)
                 print(f"ESP32: {msg}")
                 if classification is None and msg.startswith("Inference result:"):
                     m = re.search(
-                        r"Inference result: (BIRD|NO_BIRD) \(score: ([0-9.]+)\)", msg)
+                        r"Inference result: (BIRD|NO_BIRD) \(score: ([0-9.]+)\)", msg
+                    )
                     if m:
                         classification = m.group(1)
                         score = m.group(2)
@@ -233,15 +236,14 @@ def record_audio(serial_mgr, output_file=None, playback=False):
 
         # Build new filenames
         recordings_dir = os.path.dirname(output_file)
-        timestamp = os.path.splitext(os.path.basename(output_file))[
-            0].split('_')[-1]
+        timestamp = os.path.splitext(os.path.basename(output_file))[0].split("_")[-1]
         archive_name = f"{class_str}_{score_str}_{timestamp}.wav"
         archive_path = os.path.join(recordings_dir, archive_name)
         latest_name = f"latest_recording_{class_str}_{score_str}.wav"
         latest_path = os.path.join(recordings_dir, latest_name)
 
         # Save archive file
-        with wave.open(archive_path, 'w') as wf:
+        with wave.open(archive_path, "w") as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)
             wf.setframerate(sample_rate)
@@ -257,7 +259,7 @@ def record_audio(serial_mgr, output_file=None, playback=False):
                     pass
 
         # Save as latest recording
-        with wave.open(latest_path, 'w') as wf:
+        with wave.open(latest_path, "w") as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)
             wf.setframerate(sample_rate)
@@ -275,13 +277,15 @@ def record_audio(serial_mgr, output_file=None, playback=False):
         # Send playback command if requested
         if playback:
             print("Sending playback command to ESP32...")
-            serial_mgr.write(b'p')
+            serial_mgr.write(b"p")
 
             # Read and display any status messages from playback
             timeout = time.time() + 5  # 5 second timeout
             while time.time() < timeout:
                 if serial_mgr.in_waiting:
-                    msg = serial_mgr.readline().decode('utf-8', errors='replace').strip()
+                    msg = (
+                        serial_mgr.readline().decode("utf-8", errors="replace").strip()
+                    )
                     if msg:
                         print(f"ESP32: {msg}")
                 else:
@@ -312,7 +316,7 @@ def receive_audio_once(serial_mgr, output_file=None, compute_dominant=True):
 
         # Read lines until BEGIN_AUDIO
         while True:
-            line = serial_mgr.readline().decode('utf-8', errors='replace').strip()
+            line = serial_mgr.readline().decode("utf-8", errors="replace").strip()
             if not line:
                 print("Timeout waiting for recording to start")
                 return
@@ -321,20 +325,22 @@ def receive_audio_once(serial_mgr, output_file=None, compute_dominant=True):
             print(f"ESP32: {line}")
             if line.startswith("Inference result:"):
                 m = re.search(
-                    r"Inference result: (BIRD|NO_BIRD) \(score: ([0-9.]+)\)", line)
+                    r"Inference result: (BIRD|NO_BIRD) \(score: ([0-9.]+)\)", line
+                )
                 if m:
                     classification = m.group(1)
                     score = m.group(2)
 
         # Read header information
-        sample_rate = int(serial_mgr.readline().decode('utf-8').strip())
-        num_samples = int(serial_mgr.readline().decode('utf-8').strip())
+        sample_rate = int(serial_mgr.readline().decode("utf-8").strip())
+        num_samples = int(serial_mgr.readline().decode("utf-8").strip())
 
         print(
-            f"Recording started. Sample rate: {sample_rate}Hz, Expected samples: {num_samples}")
+            f"Recording started. Sample rate: {sample_rate}Hz, Expected samples: {num_samples}"
+        )
 
         # Wait for binary data marker
-        line = serial_mgr.readline().decode('utf-8').strip()
+        line = serial_mgr.readline().decode("utf-8").strip()
         if line != "BEGIN_BINARY":
             raise ValueError(f"Expected 'BEGIN_BINARY', got '{line}'")
 
@@ -349,24 +355,26 @@ def receive_audio_once(serial_mgr, output_file=None, compute_dominant=True):
         binary_data = read_exact(serial_mgr, expected_bytes, overall_timeout)
         if len(binary_data) < expected_bytes:
             print(
-                f"Warning: expected {expected_bytes} bytes but received {len(binary_data)} bytes")
+                f"Warning: expected {expected_bytes} bytes but received {len(binary_data)} bytes"
+            )
 
         # Read the end marker (and newline)
         serial_mgr.readline()
-        line = serial_mgr.readline().decode('utf-8', errors='replace').strip()
+        line = serial_mgr.readline().decode("utf-8", errors="replace").strip()
         if line != "END_AUDIO":
             print(f"Warning: Expected 'END_AUDIO', got '{line}'")
 
         # --- Also parse any remaining ESP32 messages for inference result (after audio) ---
         status_messages = []
         while serial_mgr.in_waiting:
-            msg = serial_mgr.readline().decode('utf-8', errors='replace').strip()
+            msg = serial_mgr.readline().decode("utf-8", errors="replace").strip()
             if msg:
                 status_messages.append(msg)
                 print(f"ESP32: {msg}")
                 if classification is None and msg.startswith("Inference result:"):
                     m = re.search(
-                        r"Inference result: (BIRD|NO_BIRD) \(score: ([0-9.]+)\)", msg)
+                        r"Inference result: (BIRD|NO_BIRD) \(score: ([0-9.]+)\)", msg
+                    )
                     if m:
                         classification = m.group(1)
                         score = m.group(2)
@@ -376,18 +384,17 @@ def receive_audio_once(serial_mgr, output_file=None, compute_dominant=True):
             score = "NA"
 
         class_str = classification.replace("_", "").lower()
-        score_str = score.replace('.', 'p')
+        score_str = score.replace(".", "p")
 
         recordings_dir = os.path.dirname(output_file)
-        timestamp = os.path.splitext(os.path.basename(output_file))[
-            0].split('_')[-1]
+        timestamp = os.path.splitext(os.path.basename(output_file))[0].split("_")[-1]
         archive_name = f"{class_str}_{score_str}_{timestamp}.wav"
         archive_path = os.path.join(recordings_dir, archive_name)
         latest_name = f"latest_recording_{class_str}_{score_str}.wav"
         latest_path = os.path.join(recordings_dir, latest_name)
 
         # Save archive
-        with wave.open(archive_path, 'w') as wf:
+        with wave.open(archive_path, "w") as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)
             wf.setframerate(sample_rate)
@@ -396,12 +403,12 @@ def receive_audio_once(serial_mgr, output_file=None, compute_dominant=True):
 
         # Update latest
         for f in os.listdir(recordings_dir):
-            if f.startswith("latest_recording_") and f.endswith('.wav'):
+            if f.startswith("latest_recording_") and f.endswith(".wav"):
                 try:
                     os.remove(os.path.join(recordings_dir, f))
                 except Exception:
                     pass
-        with wave.open(latest_path, 'w') as wf:
+        with wave.open(latest_path, "w") as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)
             wf.setframerate(sample_rate)
@@ -415,8 +422,9 @@ def receive_audio_once(serial_mgr, output_file=None, compute_dominant=True):
                 print(f"Dominant frequency: {dominant_freq:.2f} Hz")
             else:
                 print("Could not determine dominant frequency.")
-        duration_seconds = float(num_samples) / \
-            float(sample_rate) if sample_rate > 0 else 0.0
+        duration_seconds = (
+            float(num_samples) / float(sample_rate) if sample_rate > 0 else 0.0
+        )
         return archive_path, duration_seconds
 
     except Exception as e:
@@ -430,14 +438,14 @@ def play_last_recording(serial_mgr):
     """
     try:
         # Send playback command
-        serial_mgr.write(b'p')
+        serial_mgr.write(b"p")
         print("Sent playback command to ESP32")
 
         # Read and display any status messages
         timeout = time.time() + 5  # 5 second timeout
         while time.time() < timeout:
             if serial_mgr.in_waiting:
-                msg = serial_mgr.readline().decode('utf-8', errors='replace').strip()
+                msg = serial_mgr.readline().decode("utf-8", errors="replace").strip()
                 if msg:
                     print(f"ESP32: {msg}")
                     timeout = time.time() + 5  # Reset timeout when receiving messages
@@ -464,37 +472,41 @@ def interactive_mode(serial_mgr):
         while True:
             command = input("> ").strip().lower()
 
-            if command == 'r':
+            if command == "r":
                 last_file = record_audio(serial_mgr)
-            elif command == 'c':
+            elif command == "c":
                 print("Starting continuous recording (press Ctrl+C to stop)")
-                serial_mgr.write(b'c')
+                serial_mgr.write(b"c")
                 try:
                     rec_count = 0
                     total_seconds = 0.0
                     while True:
                         path, dur = receive_audio_once(
-                            serial_mgr, compute_dominant=False)
+                            serial_mgr, compute_dominant=False
+                        )
                         if path:
                             rec_count += 1
                             total_seconds += dur
                             print(
-                                f"Recorded #{rec_count}: {os.path.basename(path)}  clip={seconds_to_hms(dur)} total={seconds_to_hms(total_seconds)}")
+                                f"Recorded #{rec_count}: {os.path.basename(path)}  clip={seconds_to_hms(dur)} total={seconds_to_hms(total_seconds)}"
+                            )
                         else:
                             print("Warning: failed to receive recording")
                 except KeyboardInterrupt:
                     print("Stopping continuous recording")
                     try:
-                        serial_mgr.write(b's')
+                        serial_mgr.write(b"s")
                     except Exception:
                         pass
-            elif command == 'p':
+            elif command == "p":
                 play_last_recording(serial_mgr)
-            elif command == 'q':
+            elif command == "q":
                 print("Exiting...")
                 break
             else:
-                print("Unknown command. Use 'r' to record, 'p' to play, or 'q' to quit.")
+                print(
+                    "Unknown command. Use 'r' to record, 'p' to play, or 'q' to quit."
+                )
 
     except KeyboardInterrupt:
         print("\nExiting...")
@@ -502,21 +514,42 @@ def interactive_mode(serial_mgr):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description='Record and play audio from ESP32 via serial')
-    parser.add_argument('--port', default=DEFAULT_PORT,
-                        help=f'Serial port (default: {DEFAULT_PORT})')
-    parser.add_argument('--baudrate', type=int, default=DEFAULT_BAUD,
-                        help=f'Baud rate (default: {DEFAULT_BAUD})')
-    parser.add_argument('--output', default=None,
-                        help='Output file name (default: auto-generated timestamp)')
-    parser.add_argument('--playback', action='store_true',
-                        help='Play back the recording on the ESP32 after recording')
-    parser.add_argument('--play-only', action='store_true',
-                        help='Only play back the last recording (no new recording)')
-    parser.add_argument('--auto', action='store_true',
-                        help='Run automatic record+playback once on startup')
-    parser.add_argument('--continuous', action='store_true',
-                        help='Start MCU continuous recording mode and receive recordings until interrupted')
+        description="Record and play audio from ESP32 via serial"
+    )
+    parser.add_argument(
+        "--port", default=DEFAULT_PORT, help=f"Serial port (default: {DEFAULT_PORT})"
+    )
+    parser.add_argument(
+        "--baudrate",
+        type=int,
+        default=DEFAULT_BAUD,
+        help=f"Baud rate (default: {DEFAULT_BAUD})",
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="Output file name (default: auto-generated timestamp)",
+    )
+    parser.add_argument(
+        "--playback",
+        action="store_true",
+        help="Play back the recording on the ESP32 after recording",
+    )
+    parser.add_argument(
+        "--play-only",
+        action="store_true",
+        help="Only play back the last recording (no new recording)",
+    )
+    parser.add_argument(
+        "--auto",
+        action="store_true",
+        help="Run automatic record+playback once on startup",
+    )
+    parser.add_argument(
+        "--continuous",
+        action="store_true",
+        help="Start MCU continuous recording mode and receive recordings until interrupted",
+    )
 
     args = parser.parse_args()
 
@@ -528,24 +561,24 @@ if __name__ == "__main__":
         elif args.continuous:
             # Tell MCU to start continuous mode and receive recordings until interrupted
             print("Starting MCU continuous mode (press Ctrl+C to stop)")
-            serial_mgr.write(b'c')
+            serial_mgr.write(b"c")
             try:
                 rec_count = 0
                 total_seconds = 0.0
                 while True:
-                    path, dur = receive_audio_once(
-                        serial_mgr, compute_dominant=False)
+                    path, dur = receive_audio_once(serial_mgr, compute_dominant=False)
                     if path:
                         rec_count += 1
                         total_seconds += dur
                         print(
-                            f"Recorded #{rec_count}: {os.path.basename(path)}  clip={seconds_to_hms(dur)} total={seconds_to_hms(total_seconds)}")
+                            f"Recorded #{rec_count}: {os.path.basename(path)}  clip={seconds_to_hms(dur)} total={seconds_to_hms(total_seconds)}"
+                        )
                     else:
                         print("Warning: failed to receive recording")
             except KeyboardInterrupt:
                 print("Interrupted by user - stopping MCU continuous mode")
                 try:
-                    serial_mgr.write(b's')
+                    serial_mgr.write(b"s")
                 except Exception:
                     pass
         else:

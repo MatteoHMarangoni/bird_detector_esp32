@@ -5,10 +5,13 @@
 #include <Wire.h>
 #include <esp_heap_caps.h>
 #include <math.h>
+#include <string.h>
+#include <stdlib.h>
+#include <marres_clone_inferencing.h>
 
 // --- Configuration constants ---
 #define SAMPLE_RATE 16000        // 16 kHz
-#define RECORD_TIME_MS 3000      // 3 seconds
+#define RECORD_TIME_MS 1000      // 1 second
 #define BUFFER_SIZE 1024         // samples per chunk
 // Software gain to apply to samples (in dB). Set to 0.0 for no change.
 #define AUDIO_GAIN_DB 10.0f
@@ -134,21 +137,135 @@ static void i2s_init_rx() {
     i2s_set_sample_rates(I2S_PORT, SAMPLE_RATE);
 }
 
+// --- Edge Impulse: file-local inference helpers ---
+static float *features = NULL;
+static float inference_score_threshold = 0.5f;
+
+static int raw_feature_get_data(size_t offset, size_t length, float *out_ptr)
+{
+    memcpy(out_ptr, features + offset, length * sizeof(float));
+    return 0;
+}
+
+static bool extractFeaturesFromBuffer(const int16_t *audio, size_t audio_len, float *out_features, size_t feature_size)
+{
+    // Find min and max
+    int16_t min_val = INT16_MAX;
+    int16_t max_val = INT16_MIN;
+    for (size_t i = 0; i < audio_len; i++)
+    {
+        if (audio[i] < min_val) min_val = audio[i];
+        if (audio[i] > max_val) max_val = audio[i];
+    }
+    if (min_val == max_val)
+    {
+        min_val = -1;
+        max_val = 1;
+    }
+    // Normalize and copy to features (min-max to [-1,1])
+    size_t i = 0;
+    for (; i < audio_len && i < feature_size; i++)
+    {
+        float sample = audio[i];
+        float norm = (sample - min_val) / (float)(max_val - min_val) * 2.0f - 1.0f;
+        out_features[i] = norm;
+    }
+    for (; i < feature_size; i++)
+    {
+        out_features[i] = 0.0f;
+    }
+    return true;
+}
+
+static void runInferenceOnRecordedAudio(const int16_t *audio, size_t audio_len)
+{
+    if (!audio || audio_len == 0)
+    {
+        Serial.println("No audio provided for inference.");
+        return;
+    }
+    if (!features)
+    {
+        features = (float *)malloc(EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE * sizeof(float));
+        if (!features)
+        {
+            Serial.println("Failed to allocate features buffer");
+            return;
+        }
+    }
+
+    unsigned long t_feat_start = micros();
+    bool feat_ok = extractFeaturesFromBuffer(audio, audio_len, features, EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE);
+    unsigned long t_feat_end = micros();
+    float feat_time_ms = (t_feat_end - t_feat_start) / 1000.0f;
+    if (!feat_ok)
+    {
+        Serial.println("Feature extraction failed");
+        return;
+    }
+
+    // Prepare EI signal - use plain function pointer
+    signal_t_ei signal;
+    signal.total_length = EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE;
+    signal.get_data = raw_feature_get_data;
+
+    ei_impulse_result_t result = {0};
+    unsigned long t_inf_start = micros();
+    EI_IMPULSE_ERROR res = run_classifier(&signal, &result, false);
+    unsigned long t_inf_end = micros();
+    float inf_time_ms = (t_inf_end - t_inf_start) / 1000.0f;
+    if (res != EI_IMPULSE_OK)
+    {
+        Serial.printf("ERR: Failed to run classifier (%d)\n", res);
+        return;
+    }
+
+    // Find "bird" class index
+    float bird_score = 0.0f;
+    int bird_index = -1;
+    for (size_t ix = 0; ix < EI_CLASSIFIER_LABEL_COUNT; ix++)
+    {
+        if (strcmp(ei_classifier_inferencing_categories[ix], "bird") == 0)
+        {
+            bird_index = ix;
+            break;
+        }
+    }
+    if (bird_index >= 0)
+    {
+        bird_score = result.classification[bird_index].value;
+    }
+    else
+    {
+        bird_score = result.classification[0].value;
+        Serial.println("Warning: No 'bird' class found, using first class as bird");
+    }
+
+    Serial.printf("Inference result: %s (score: %.3f) | Feature ext: %.2f ms | Inference: %.2f ms\n",
+                  bird_score > inference_score_threshold ? "BIRD" : "NO_BIRD",
+                  bird_score, feat_time_ms, inf_time_ms);
+}
+
 // --- Recording and serial streaming ---
 static void recordAndSendAudio() {
     const int total_samples = (SAMPLE_RATE * RECORD_TIME_MS) / 1000;
-
     const size_t total_bytes = (size_t)total_samples * sizeof(int16_t);
 
-    // Try to allocate a contiguous buffer in PSRAM for the entire recording.
-    // If PSRAM isn't available or allocation fails, fall back to streaming mode.
+    // Try PSRAM first, fall back to DRAM malloc so we can still run inference
     int16_t *psram_buf = nullptr;
+    int16_t *dram_buf = nullptr;
     if (total_bytes > 0) {
         psram_buf = (int16_t *)heap_caps_malloc(total_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (psram_buf) {
             Serial.println("Using PSRAM buffer for full capture");
         } else {
-            // Serial.println("PSRAM buffer unavailable, using streaming mode");
+            // fallback to DRAM so inference can run even without PSRAM
+            dram_buf = (int16_t *)malloc(total_bytes);
+            if (dram_buf) {
+                Serial.println("Using DRAM buffer for full capture (no PSRAM)");
+            } else {
+                // no large buffer available -> streaming mode (no inference)
+            }
         }
     }
 
@@ -173,24 +290,22 @@ static void recordAndSendAudio() {
         delay(5);
     }
 
-    // Announce header for Python receiver (after warm-up so data starts immediately)
-    Serial.println("BEGIN_AUDIO");
-    Serial.println(SAMPLE_RATE);
-    Serial.println(total_samples);
-    Serial.println("BEGIN_BINARY");
+    // NOTE: For the full-buffer path we will print the inference result first,
+    // then print the BEGIN_AUDIO header so the Python receiver can capture the
+    // "Inference result:" line in its pre-BEGIN_AUDIO parsing loop.
 
-    if (psram_buf) {
+    if (psram_buf || dram_buf) {
+        int16_t *buf = psram_buf ? psram_buf : dram_buf;
         // compute gain factor from dB
         const float gain_factor = powf(10.0f, (AUDIO_GAIN_DB) / 20.0f);
-        // Read entire recording into PSRAM buffer, then send it in chunks.
+        // Read entire recording into buffer
         size_t samples_filled = 0;
         while (samples_filled < (size_t)total_samples) {
             size_t to_read = min((size_t)BUFFER_SIZE, (size_t)total_samples - samples_filled);
             size_t bytes_read = 0;
-            esp_err_t ok = i2s_read(I2S_PORT, psram_buf + samples_filled, to_read * sizeof(int16_t), &bytes_read, portMAX_DELAY);
+            esp_err_t ok = i2s_read(I2S_PORT, buf + samples_filled, to_read * sizeof(int16_t), &bytes_read, portMAX_DELAY);
             if (ok != ESP_OK || bytes_read == 0) {
-                // pad with zeros
-                memset(psram_buf + samples_filled, 0, to_read * sizeof(int16_t));
+                memset(buf + samples_filled, 0, to_read * sizeof(int16_t));
                 bytes_read = to_read * sizeof(int16_t);
             }
             samples_filled += (bytes_read / sizeof(int16_t));
@@ -199,39 +314,54 @@ static void recordAndSendAudio() {
         // Apply software gain (in-place) with clipping
         if (AUDIO_GAIN_DB != 0.0f) {
             for (size_t i = 0; i < (size_t)total_samples; ++i) {
-                int32_t v = (int32_t)((float)psram_buf[i] * gain_factor);
+                int32_t v = (int32_t)((float)buf[i] * gain_factor);
                 if (v > 32767) v = 32767;
                 else if (v < -32768) v = -32768;
-                psram_buf[i] = (int16_t)v;
+                buf[i] = (int16_t)v;
             }
         }
 
-        // Send header then send buffer in chunks to avoid huge Serial.write calls
+        // Run inference on the captured buffer
+        runInferenceOnRecordedAudio(buf, total_samples);
+
+        // Announce header for Python receiver AFTER inference so the Python script
+        // can capture the "Inference result:" line before BEGIN_AUDIO.
+        Serial.println("BEGIN_AUDIO");
+        Serial.println(SAMPLE_RATE);
+        Serial.println(total_samples);
+        Serial.println("BEGIN_BINARY");
+
+        // Send buffer in chunks to avoid huge Serial.write calls
         const size_t send_chunk_bytes = 4096;
         size_t bytes_sent = 0;
         while (bytes_sent < total_bytes) {
             size_t chunk = min(send_chunk_bytes, total_bytes - bytes_sent);
-            Serial.write(((uint8_t *)psram_buf) + bytes_sent, chunk);
+            Serial.write(((uint8_t *)buf) + bytes_sent, chunk);
             bytes_sent += chunk;
-            // small yield to allow UART to flush
             delay(1);
         }
-        // Ensure all UART bytes are transmitted before signalling end
         Serial.flush();
-        // free PSRAM buffer
-        heap_caps_free(psram_buf);
+        if (psram_buf) heap_caps_free(psram_buf);
+        if (dram_buf) free(dram_buf);
     } else {
         // Stream samples in chunks directly to serial to avoid big mallocs
+        // (streaming path keeps original behaviour: header printed before streaming)
+        // Announce header for Python receiver (after warm-up so data starts immediately)
+        Serial.println("BEGIN_AUDIO");
+        Serial.println(SAMPLE_RATE);
+        Serial.println(total_samples);
+        Serial.println("BEGIN_BINARY");
+
         int samples_sent = 0;
-        int16_t buf[BUFFER_SIZE];
+        int16_t buf_stream[BUFFER_SIZE];
         while (samples_sent < total_samples) {
             size_t to_read = min(BUFFER_SIZE, total_samples - samples_sent);
             size_t bytes_read = 0;
             // Read mono 16-bit samples
-            esp_err_t ok = i2s_read(I2S_PORT, buf, to_read * sizeof(int16_t), &bytes_read, portMAX_DELAY);
+            esp_err_t ok = i2s_read(I2S_PORT, buf_stream, to_read * sizeof(int16_t), &bytes_read, portMAX_DELAY);
             if (ok != ESP_OK || bytes_read == 0) {
                 // if read fails, pad with zeros to keep framing
-                memset(buf, 0, to_read * sizeof(int16_t));
+                memset(buf_stream, 0, to_read * sizeof(int16_t));
                 bytes_read = to_read * sizeof(int16_t);
             }
             // Apply software gain per-sample before sending
@@ -239,13 +369,13 @@ static void recordAndSendAudio() {
                 const float gain_factor_stream = powf(10.0f, (AUDIO_GAIN_DB) / 20.0f);
                 size_t samples_read = bytes_read / sizeof(int16_t);
                 for (size_t si = 0; si < samples_read; ++si) {
-                    int32_t vv = (int32_t)((float)buf[si] * gain_factor_stream);
+                    int32_t vv = (int32_t)((float)buf_stream[si] * gain_factor_stream);
                     if (vv > 32767) vv = 32767;
                     else if (vv < -32768) vv = -32768;
-                    buf[si] = (int16_t)vv;
+                    buf_stream[si] = (int16_t)vv;
                 }
             }
-            Serial.write((uint8_t *)buf, bytes_read);
+            Serial.write((uint8_t *)buf_stream, bytes_read);
             samples_sent += (bytes_read / sizeof(int16_t));
         }
         // Ensure UART transmits remaining bytes before printing end marker
