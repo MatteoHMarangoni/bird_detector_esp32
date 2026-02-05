@@ -7,7 +7,7 @@
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
-#include <marres_clone_inferencing.h>
+#include <Zuiderpark_combined_data_inferencing.h>
 
 // Choose one mode:
 //#define CLASSIFIER_MODE// enable to have continous classification in regular serial monitor
@@ -215,7 +215,7 @@ static void runInferenceOnRecordedAudio(const int16_t *audio, size_t audio_len)
     }
 
     // Prepare EI signal - use plain function pointer
-    signal_t_ei signal;
+    signal_t signal;
     signal.total_length = EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE;
     signal.get_data = raw_feature_get_data;
 
