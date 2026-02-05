@@ -9,6 +9,12 @@
 #include <stdlib.h>
 #include <marres_clone_inferencing.h>
 
+// Choose one mode:
+//#define CLASSIFIER_MODE// enable to have continous classification in regular serial monitor
+#define COMMUNICATION_MODE // enable to stream audio and classifications to host via a python file
+
+//#define LED_PIN 15 // If defined an led will turned on for ewhen the inference returns a  positive classification for visual feedback.
+
 // --- Configuration constants ---
 #define SAMPLE_RATE 16000        // 16 kHz
 #define RECORD_TIME_MS 1000      // 1 second
@@ -141,6 +147,10 @@ static void i2s_init_rx() {
 static float *features = NULL;
 static float inference_score_threshold = 0.5f;
 
+// --- Static DRAM audio buffer (reused across recordings) ---
+static int16_t *audio_buf = nullptr;
+static size_t audio_buf_bytes = 0;
+
 static int raw_feature_get_data(size_t offset, size_t length, float *out_ptr)
 {
     memcpy(out_ptr, features + offset, length * sizeof(float));
@@ -244,6 +254,14 @@ static void runInferenceOnRecordedAudio(const int16_t *audio, size_t audio_len)
     Serial.printf("Inference result: %s (score: %.3f) | Feature ext: %.2f ms | Inference: %.2f ms\n",
                   bird_score > inference_score_threshold ? "BIRD" : "NO_BIRD",
                   bird_score, feat_time_ms, inf_time_ms);
+
+    #ifdef LED_PIN
+       if (bird_score > inference_score_threshold) {
+           digitalWrite(LED_PIN, HIGH);
+       } else {
+           digitalWrite(LED_PIN, LOW);
+       }
+    #endif
 }
 
 // --- Recording and serial streaming ---
@@ -251,21 +269,19 @@ static void recordAndSendAudio() {
     const int total_samples = (SAMPLE_RATE * RECORD_TIME_MS) / 1000;
     const size_t total_bytes = (size_t)total_samples * sizeof(int16_t);
 
-    // Try PSRAM first, fall back to DRAM malloc so we can still run inference
-    int16_t *psram_buf = nullptr;
-    int16_t *dram_buf = nullptr;
-    if (total_bytes > 0) {
-        psram_buf = (int16_t *)heap_caps_malloc(total_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (psram_buf) {
-            Serial.println("Using PSRAM buffer for full capture");
+    // Use a single static DRAM buffer (reused across recordings)
+    if (total_bytes > 0 && audio_buf_bytes < total_bytes) {
+        if (audio_buf) {
+            free(audio_buf);
+            audio_buf = nullptr;
+            audio_buf_bytes = 0;
+        }
+        audio_buf = (int16_t *)malloc(total_bytes);
+        if (audio_buf) {
+            audio_buf_bytes = total_bytes;
+            Serial.println("Using static DRAM buffer for full capture");
         } else {
-            // fallback to DRAM so inference can run even without PSRAM
-            dram_buf = (int16_t *)malloc(total_bytes);
-            if (dram_buf) {
-                Serial.println("Using DRAM buffer for full capture (no PSRAM)");
-            } else {
-                // no large buffer available -> streaming mode (no inference)
-            }
+            // no large buffer available -> streaming mode (no inference)
         }
     }
 
@@ -294,8 +310,8 @@ static void recordAndSendAudio() {
     // then print the BEGIN_AUDIO header so the Python receiver can capture the
     // "Inference result:" line in its pre-BEGIN_AUDIO parsing loop.
 
-    if (psram_buf || dram_buf) {
-        int16_t *buf = psram_buf ? psram_buf : dram_buf;
+    if (audio_buf) {
+        int16_t *buf = audio_buf;
         // compute gain factor from dB
         const float gain_factor = powf(10.0f, (AUDIO_GAIN_DB) / 20.0f);
         // Read entire recording into buffer
@@ -324,6 +340,7 @@ static void recordAndSendAudio() {
         // Run inference on the captured buffer
         runInferenceOnRecordedAudio(buf, total_samples);
 
+#if defined(COMMUNICATION_MODE)
         // Announce header for Python receiver AFTER inference so the Python script
         // can capture the "Inference result:" line before BEGIN_AUDIO.
         Serial.println("BEGIN_AUDIO");
@@ -341,9 +358,13 @@ static void recordAndSendAudio() {
             delay(1);
         }
         Serial.flush();
-        if (psram_buf) heap_caps_free(psram_buf);
-        if (dram_buf) free(dram_buf);
+        // Zero buffer after send to reduce stale data and memory issues
+        if (audio_buf && audio_buf_bytes >= total_bytes) {
+            memset(audio_buf, 0, total_bytes);
+        }
+#endif
     } else {
+#if defined(COMMUNICATION_MODE)
         // Stream samples in chunks directly to serial to avoid big mallocs
         // (streaming path keeps original behaviour: header printed before streaming)
         // Announce header for Python receiver (after warm-up so data starts immediately)
@@ -380,10 +401,13 @@ static void recordAndSendAudio() {
         }
         // Ensure UART transmits remaining bytes before printing end marker
         Serial.flush();
+#endif
     }
 
+#if defined(COMMUNICATION_MODE)
     Serial.println();
     Serial.println("END_AUDIO");
+#endif
 }
 
 void setup() {
@@ -393,6 +417,11 @@ void setup() {
         delay(10);
     }
     Serial.println("ES8388 MIC1 differential capture (I2S RX) ready");
+#if defined(CLASSIFIER_MODE) && !defined(COMMUNICATION_MODE)
+    Serial.println("Mode: CLASSIFIER_MODE (inference-only, no audio streaming)");
+#elif defined(COMMUNICATION_MODE)
+    Serial.println("Mode: COMMUNICATION_MODE (streaming + inference)");
+#endif
 
     // I2C and ES8388 init
     codecWire.begin(ES8388_I2C_SDA, ES8388_I2C_SCL, ES8388_I2C_SPEED);
@@ -401,9 +430,21 @@ void setup() {
 
     // I2S RX
     i2s_init_rx();
+
+
+    #ifdef LED_PIN
+        pinMode(LED_PIN, OUTPUT);
+        digitalWrite(LED_PIN, LOW);
+    #endif
 }
 
 void loop() {
+#if defined(CLASSIFIER_MODE) && !defined(COMMUNICATION_MODE)
+    // In classifier-only mode, record 1s clips, run inference, and report.
+    recordAndSendAudio();
+    delay(10);
+    return;
+#else
     if (Serial.available() > 0) {
         char cmd = Serial.read();
         if (cmd == 'r') {
@@ -432,5 +473,6 @@ void loop() {
             Serial.println("Playback not implemented in ADC-only mode");
         }
     }
+#endif
 }
 

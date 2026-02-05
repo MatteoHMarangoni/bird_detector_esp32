@@ -5,3 +5,4 @@
 .vscode/ipch
 recordings
 .venv
+python_script/__pycache__/Serial_Audio.cpython-312.pyc

@@ -30,6 +30,12 @@ except Exception:  # pragma: no cover
 DEFAULT_BAUD = 921600
 DEFAULT_TIMEOUT = 30
 
+# Configurable retries for serial recovery
+SERIAL_MAX_RETRIES = 3
+
+# Calibrated lead time between starting playback and sending 'r' to ESP32 (seconds)
+CALIBRATED_LEAD_S = 0.20
+
 # Test file locations (kept alongside this script)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TEST_FILES_BASE = os.path.join(SCRIPT_DIR, "input")
@@ -95,7 +101,20 @@ class SerialManager:
 
     def readline(self):
         self.open()
-        return self.ser.readline()
+        # Try a normal readline first
+        try:
+            data = self.ser.readline()
+        except Exception:
+            data = b""
+
+        # If we got nothing, attempt one reset/retry
+        if not data:
+            try:
+                self.reset_connection()
+                data = self.ser.readline()
+            except Exception:
+                data = b""
+        return data
 
     def read(self, size):
         self.open()
@@ -105,6 +124,94 @@ class SerialManager:
     def in_waiting(self):
         self.open()
         return self.ser.in_waiting if self.ser else 0
+
+    def flush_input(self):
+        self.open()
+        try:
+            self.ser.reset_input_buffer()
+        except Exception:
+            try:
+                self.ser.flushInput()
+            except Exception:
+                pass
+
+    def flush_output(self):
+        self.open()
+        try:
+            self.ser.reset_output_buffer()
+        except Exception:
+            try:
+                self.ser.flushOutput()
+            except Exception:
+                pass
+
+    def reset_connection(self):
+        try:
+            if self.ser:
+                try:
+                    self.ser.close()
+                except Exception:
+                    pass
+        finally:
+            self.ser = None
+        time.sleep(0.5)
+        self.open()
+        try:
+            self.ser.setDTR(False)
+            time.sleep(0.05)
+            self.ser.setRTS(True)
+            time.sleep(0.05)
+            self.ser.setDTR(True)
+            self.ser.setRTS(False)
+        except Exception:
+            pass
+        time.sleep(0.3)
+
+    def read_exact(self, size, overall_timeout=None):
+        self.open()
+        end_time = time.time() + (overall_timeout if overall_timeout is not None else self.timeout)
+        chunks = []
+        remaining = size
+        while remaining > 0 and time.time() < end_time:
+            try:
+                chunk = self.ser.read(remaining)
+            except Exception:
+                chunk = b""
+            if chunk:
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            else:
+                time.sleep(0.01)
+        data = b"".join(chunks)
+        if len(data) == size:
+            return data
+
+        try:
+            self.reset_connection()
+        except Exception:
+            pass
+
+        end_time = time.time() + (
+            overall_timeout * 1.5 if overall_timeout is not None else self.timeout * 1.5
+        )
+        chunks = []
+        remaining = size
+        while remaining > 0 and time.time() < end_time:
+            try:
+                chunk = self.ser.read(remaining)
+            except Exception:
+                chunk = b""
+            if chunk:
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            else:
+                time.sleep(0.01)
+        data = b"".join(chunks)
+        if len(data) != size:
+            raise TimeoutError(
+                f"Expected {size} bytes, got {len(data)} bytes before timeout (after retry)"
+            )
+        return data
 
 
 def read_exact(serial_mgr, expected_bytes, overall_timeout_seconds=None):
@@ -179,7 +286,176 @@ def play_wav_file(filepath):
         print(f"Could not play test file: {e}")
 
 
-def record_audio(serial_mgr, output_file=None, playback=False, label=None, compute_dominant=True):
+def play_tone_blocking(frequency=2000.0, duration_s=1.5, sample_rate=48000, amplitude=0.3):
+    if sd is None or np is None:
+        print("Playback dependencies not installed. Cannot play calibration tone.")
+        return
+    try:
+        t = np.arange(int(duration_s * sample_rate)) / sample_rate
+        tone = np.sin(2 * np.pi * frequency * t).astype(np.float32)
+        fade_len = int(0.01 * sample_rate)
+        if fade_len > 0:
+            fade = np.linspace(0, 1, fade_len).astype(np.float32)
+            tone[:fade_len] *= fade
+            tone[-fade_len:] *= fade[::-1]
+        sd.play(amplitude * tone, sample_rate)
+        sd.wait()
+    except Exception as e:
+        print(f"Could not play tone: {e}")
+
+
+def _goertzel_power(samples, fs, f_target):
+    if len(samples) == 0:
+        return 0.0
+    x = samples.astype(np.float64, copy=False)
+    omega = 2.0 * np.pi * (f_target / fs)
+    coeff = 2.0 * np.cos(omega)
+    s_prev = 0.0
+    s_prev2 = 0.0
+    for xn in x:
+        s = xn + coeff * s_prev - s_prev2
+        s_prev2 = s_prev
+        s_prev = s
+    power = s_prev2 * s_prev2 + s_prev * s_prev - coeff * s_prev * s_prev2
+    return float(power)
+
+
+def analyze_tone_coverage(wav_path, target_freq):
+    import wave as _wave
+
+    with _wave.open(wav_path, "rb") as wf:
+        fs = wf.getframerate()
+        n = wf.getnframes()
+        raw = wf.readframes(n)
+    samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+    if len(samples) == 0:
+        return {"coverage": 0.0, "lead_ms": 1000.0, "tail_ms": 1000.0, "fs": 0}
+
+    win_ms = 50
+    hop_ms = 10
+    win = max(1, int(fs * win_ms / 1000.0))
+    hop = max(1, int(fs * hop_ms / 1000.0))
+    if win > 1:
+        hann = 0.5 - 0.5 * np.cos(2 * np.pi * np.arange(win) / (win - 1))
+    else:
+        hann = np.ones(1, dtype=np.float64)
+
+    presence = []
+    idx = 0
+    while idx + win <= len(samples):
+        seg = samples[idx : idx + win]
+        segw = seg * hann
+        target_power = _goertzel_power(segw, fs, target_freq)
+        total_power = float(np.mean(segw * segw) + 1e-12)
+        ratio = target_power / (total_power * win)
+        presence.append(ratio > 8.0)
+        idx += hop
+
+    if not presence:
+        return {"coverage": 0.0, "lead_ms": 1000.0, "tail_ms": 1000.0, "fs": fs}
+
+    presence = np.array(presence, dtype=bool)
+    coverage = float(np.mean(presence))
+    if np.any(presence):
+        first = int(np.argmax(presence))
+        last = int(len(presence) - 1 - np.argmax(presence[::-1]))
+        lead_ms = first * hop_ms
+        tail_ms = (len(presence) - 1 - last) * hop_ms
+    else:
+        lead_ms = 1000.0
+        tail_ms = 1000.0
+    return {"coverage": coverage, "lead_ms": float(lead_ms), "tail_ms": float(tail_ms), "fs": fs}
+
+
+def calibrate_recording_delays(serial_mgr, tone_freq=2000.0, offsets_ms=None, tone_duration_s=1.5):
+    global CALIBRATED_LEAD_S
+    if sd is None or np is None:
+        print("Calibration requires sounddevice and numpy. Skipping.")
+        return
+
+    if offsets_ms is None:
+        offsets_ms = list(range(0, 401, 40))
+
+    print("\n--- Calibration: estimating playback->record lead delay ---")
+    print(
+        f"Tone: {tone_freq:.0f} Hz, duration: {tone_duration_s:.2f}s, test offsets (ms): {offsets_ms}"
+    )
+
+    rec_dir = ensure_recordings_dir()
+    calib_dir = os.path.join(rec_dir, "calibration")
+    os.makedirs(calib_dir, exist_ok=True)
+
+    def _latest_latest_recording(path):
+        latest_path = None
+        latest_mtime = -1
+        for f in os.listdir(path):
+            if f.startswith("latest_recording_") and f.lower().endswith(".wav"):
+                fp = os.path.join(path, f)
+                try:
+                    mt = os.path.getmtime(fp)
+                except Exception:
+                    continue
+                if mt > latest_mtime:
+                    latest_mtime = mt
+                    latest_path = fp
+        return latest_path
+
+    results = []
+    for off in offsets_ms:
+        print(f"\n[Calib] Testing offset = {off} ms")
+        t = threading.Thread(
+            target=play_tone_blocking,
+            kwargs={"frequency": tone_freq, "duration_s": tone_duration_s},
+        )
+        t.start()
+        time.sleep(off / 1000.0)
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_path = os.path.join(calib_dir, f"calibration_offset_{off}ms_{ts}.wav")
+        _ = record_audio(
+            serial_mgr,
+            output_file=out_path,
+            playback=False,
+            label=None,
+            max_retries=SERIAL_MAX_RETRIES,
+        )
+        t.join()
+
+        latest = _latest_latest_recording(calib_dir)
+        if not latest or not os.path.isfile(latest):
+            print("[Calib] Recording failed for this offset.")
+            results.append({"offset_ms": off, "coverage": 0.0, "lead_ms": 1000.0, "tail_ms": 1000.0})
+            continue
+
+        stats = analyze_tone_coverage(latest, tone_freq)
+        coverage_pct = 100.0 * stats["coverage"]
+        print(
+            f"[Calib] Coverage: {coverage_pct:.1f}%, lead gap: {stats['lead_ms']:.0f} ms, tail gap: {stats['tail_ms']:.0f} ms"
+        )
+        results.append({"offset_ms": off, **stats})
+
+    if not results:
+        print("Calibration failed: no successful recordings.")
+        return
+
+    results.sort(key=lambda r: (-r["coverage"], abs(r["lead_ms"] - r["tail_ms"])))
+    best = results[0]
+    rec_ms = int(best["offset_ms"])
+    CALIBRATED_LEAD_S = rec_ms / 1000.0
+    print(
+        f"\nCalibration complete. Recommended lead offset: {rec_ms} ms (coverage {best['coverage']*100:.1f}%)."
+    )
+    print("This lead will now be used for auto-cycle and next-test recording during this run.")
+
+
+def record_audio(
+    serial_mgr,
+    output_file=None,
+    playback=False,
+    label=None,
+    compute_dominant=True,
+    max_retries=None,
+):
     if output_file is None:
         if label:
             recordings_dir = ensure_label_recordings_dir(label)
@@ -187,124 +463,157 @@ def record_audio(serial_mgr, output_file=None, playback=False, label=None, compu
             recordings_dir = ensure_recordings_dir()
         output_file = get_timestamped_filename(recordings_dir)
 
-    try:
-        serial_mgr.write(b"r")
-        print("Sent recording command to ESP32")
+    if max_retries is None:
+        max_retries = SERIAL_MAX_RETRIES
 
-        classification = None
-        score = None
-        import re
-
-        while True:
-            line = serial_mgr.readline().decode("utf-8", errors="replace").strip()
-            if not line:
-                print("Timeout waiting for recording to start")
-                return None
-            if line.startswith("BEGIN_AUDIO"):
-                break
-            print(f"ESP32: {line}")
-            if line.startswith("Inference result:"):
-                m = re.search(r"Inference result: (BIRD|NO_BIRD) \(score: ([0-9.]+)\)", line)
-                if m:
-                    classification = m.group(1)
-                    score = m.group(2)
-
-        sample_rate = int(serial_mgr.readline().decode("utf-8").strip())
-        num_samples = int(serial_mgr.readline().decode("utf-8").strip())
-        print(f"Recording started. Sample rate: {sample_rate}Hz, Expected samples: {num_samples}")
-
-        line = serial_mgr.readline().decode("utf-8").strip()
-        if line != "BEGIN_BINARY":
-            raise ValueError(f"Expected 'BEGIN_BINARY', got '{line}'")
-
-        expected_bytes = num_samples * 2
+    attempts = 0
+    last_error = None
+    while attempts <= max_retries:
         try:
-            bytes_per_sec = serial_mgr.baudrate / 10.0
-        except Exception:
-            bytes_per_sec = 11520.0
-        estimated_time = expected_bytes / bytes_per_sec
-        overall_timeout = max(serial_mgr.timeout + 5, estimated_time + 5)
-        binary_data = read_exact(serial_mgr, expected_bytes, overall_timeout)
-        if len(binary_data) < expected_bytes:
-            print(f"Warning: expected {expected_bytes} bytes but received {len(binary_data)} bytes")
+            if attempts > 0:
+                print(f"[Recovery] Retrying recording attempt {attempts}/{max_retries} after serial reset...")
 
-        serial_mgr.readline()
-        line = serial_mgr.readline().decode("utf-8", errors="replace").strip()
-        if line != "END_AUDIO":
-            print(f"Warning: Expected 'END_AUDIO', got '{line}'")
+            serial_mgr.flush_input()
+            time.sleep(0.05)
 
-        status_messages = []
-        while serial_mgr.in_waiting:
-            msg = serial_mgr.readline().decode("utf-8", errors="replace").strip()
-            if msg:
-                status_messages.append(msg)
-                print(f"ESP32: {msg}")
-                if classification is None and msg.startswith("Inference result:"):
-                    m = re.search(r"Inference result: (BIRD|NO_BIRD) \(score: ([0-9.]+)\)", msg)
+            serial_mgr.write(b"r")
+            print("Sent recording command to ESP32")
+
+            classification = None
+            score = None
+            import re
+
+            while True:
+                line = serial_mgr.readline().decode("utf-8", errors="replace").strip()
+                if not line:
+                    raise TimeoutError("No response from ESP32 before BEGIN_AUDIO")
+                if line.startswith("BEGIN_AUDIO"):
+                    break
+                print(f"ESP32: {line}")
+                if line.startswith("Inference result:"):
+                    m = re.search(
+                        r"Inference result: (BIRD|NO_BIRD) \(score: ([0-9.]+)\)", line
+                    )
                     if m:
                         classification = m.group(1)
                         score = m.group(2)
 
-        if classification is None or score is None:
-            classification = "UNKNOWN"
-            score = "NA"
+            sample_rate = int(serial_mgr.readline().decode("utf-8").strip())
+            num_samples = int(serial_mgr.readline().decode("utf-8").strip())
+            print(
+                f"Recording started. Sample rate: {sample_rate}Hz, Expected samples: {num_samples}"
+            )
 
-        class_str = classification.replace("_", "").lower()
-        score_str = score.replace(".", "p")
+            line = serial_mgr.readline().decode("utf-8").strip()
+            if line != "BEGIN_BINARY":
+                raise ValueError(f"Expected 'BEGIN_BINARY', got '{line}'")
 
-        recordings_dir = os.path.dirname(output_file)
-        timestamp = os.path.splitext(os.path.basename(output_file))[0].split("_")[-1]
-        archive_name = f"{class_str}_{score_str}_{timestamp}.wav"
-        archive_path = os.path.join(recordings_dir, archive_name)
-        latest_name = f"latest_recording_{class_str}_{score_str}.wav"
-        latest_path = os.path.join(recordings_dir, latest_name)
+            expected_bytes = num_samples * 2
+            estimated_duration = (num_samples / sample_rate) if sample_rate > 0 else 1.0
+            read_timeout = max(5.0, estimated_duration + 5.0)
+            binary_data = serial_mgr.read_exact(expected_bytes, overall_timeout=read_timeout)
 
-        with wave.open(archive_path, "w") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(sample_rate)
-            wf.writeframes(binary_data)
-        print(f"Audio saved to {os.path.abspath(archive_path)}")
+            serial_mgr.readline()
+            line = serial_mgr.readline().decode("utf-8", errors="replace").strip()
+            if line != "END_AUDIO":
+                print(f"Warning: Expected 'END_AUDIO', got '{line}'")
 
-        for f in os.listdir(recordings_dir):
-            if f.startswith("latest_recording_") and f.endswith(".wav"):
-                try:
-                    os.remove(os.path.join(recordings_dir, f))
-                except Exception:
-                    pass
+            if len(binary_data) != expected_bytes:
+                raise TimeoutError(
+                    f"Incomplete audio received: expected {expected_bytes} bytes, got {len(binary_data)} bytes"
+                )
 
-        with wave.open(latest_path, "w") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(sample_rate)
-            wf.writeframes(binary_data)
-        print(f"Audio also saved as {os.path.abspath(latest_path)}")
+            status_messages = []
+            while serial_mgr.in_waiting:
+                msg = serial_mgr.readline().decode("utf-8", errors="replace").strip()
+                if msg:
+                    status_messages.append(msg)
+                    print(f"ESP32: {msg}")
+                    if classification is None and msg.startswith("Inference result:"):
+                        m = re.search(
+                            r"Inference result: (BIRD|NO_BIRD) \(score: ([0-9.]+)\)", msg
+                        )
+                        if m:
+                            classification = m.group(1)
+                            score = m.group(2)
 
-        if compute_dominant and np is not None:
-            samples = np.frombuffer(binary_data, dtype=np.int16)
-            dominant_freq = compute_dominant_frequency(samples, sample_rate)
-            if dominant_freq is not None:
-                print(f"Dominant frequency: {dominant_freq:.2f} Hz")
-            else:
-                print("Could not determine dominant frequency.")
+            if classification is None or score is None:
+                classification = "UNKNOWN"
+                score = "NA"
 
-        if playback:
-            print("Sending playback command to ESP32...")
-            serial_mgr.write(b"p")
-            timeout = time.time() + 5
-            while time.time() < timeout:
-                if serial_mgr.in_waiting:
-                    msg = serial_mgr.readline().decode("utf-8", errors="replace").strip()
-                    if msg:
-                        print(f"ESP32: {msg}")
+            class_str = classification.replace("_", "").lower()
+            score_str = score.replace(".", "p")
+
+            recordings_dir = os.path.dirname(output_file)
+            timestamp = os.path.splitext(os.path.basename(output_file))[0].split("_")[-1]
+            archive_name = f"{class_str}_{score_str}_{timestamp}.wav"
+            archive_path = os.path.join(recordings_dir, archive_name)
+            latest_name = f"latest_recording_{class_str}_{score_str}.wav"
+            latest_path = os.path.join(recordings_dir, latest_name)
+
+            with wave.open(archive_path, "w") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(sample_rate)
+                wf.writeframes(binary_data)
+            print(f"Audio saved to {os.path.abspath(archive_path)}")
+
+            for f in os.listdir(recordings_dir):
+                if f.startswith("latest_recording_") and f.endswith(".wav"):
+                    try:
+                        os.remove(os.path.join(recordings_dir, f))
+                    except Exception:
+                        pass
+
+            with wave.open(latest_path, "w") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(sample_rate)
+                wf.writeframes(binary_data)
+            print(f"Audio also saved as {os.path.abspath(latest_path)}")
+
+            if compute_dominant and np is not None:
+                samples = np.frombuffer(binary_data, dtype=np.int16)
+                dominant_freq = compute_dominant_frequency(samples, sample_rate)
+                if dominant_freq is not None:
+                    print(f"Dominant frequency: {dominant_freq:.2f} Hz")
                 else:
-                    time.sleep(0.1)
+                    print("Could not determine dominant frequency.")
 
-        return archive_path
+            if playback:
+                print("Sending playback command to ESP32...")
+                serial_mgr.flush_input()
+                time.sleep(0.05)
+                serial_mgr.write(b"p")
+                timeout = time.time() + 5
+                while time.time() < timeout:
+                    if serial_mgr.in_waiting:
+                        msg = serial_mgr.readline().decode("utf-8", errors="replace").strip()
+                        if msg:
+                            print(f"ESP32: {msg}")
+                    else:
+                        time.sleep(0.1)
 
-    except Exception as e:
-        print(f"Error: {e}")
+            return archive_path
 
+        except TimeoutError as te:
+            last_error = te
+            print(f"[Warning] {te}. Resetting serial connection and retrying...")
+            try:
+                serial_mgr.reset_connection()
+                time.sleep(1.5)
+                serial_mgr.flush_input()
+            except Exception as re_err:
+                print(f"[Warning] Serial reset failed: {re_err}")
+            attempts += 1
+            continue
+        except Exception as e:
+            last_error = e
+            print(f"Error: {e}")
+            break
+
+    if last_error:
+        print(f"Recording failed after {max_retries + 1} attempt(s): {last_error}")
     return None
 
 
@@ -482,6 +791,7 @@ def auto_cycle(serial_mgr):
         print(f"\n--- Playing and recording: {os.path.basename(test_file)} ({label}) ---")
         playback_thread = threading.Thread(target=play_wav_file, args=(test_file,))
         playback_thread.start()
+        time.sleep(CALIBRATED_LEAD_S)
         record_audio(serial_mgr, output_file=None, playback=False, label=label)
         playback_thread.join()
         time.sleep(1)
@@ -492,8 +802,9 @@ def interactive_mode(serial_mgr):
     print("  r - record a new audio sample")
     print("  c - start continuous recording (press Ctrl+C to stop)")
     print("  p - play the last recorded audio")
-    print("  t - record and play next test file")
+    print("  t - play next test file and record it")
     print("  a - auto-cycle all test files (bird, then no_bird)")
+    print("  k - calibrate playback->record lead delay")
     print("  q - quit")
 
     global _test_files
@@ -546,10 +857,13 @@ def interactive_mode(serial_mgr):
                 _test_file_index[0] = (idx + 1) % len(_test_files)
                 playback_thread = threading.Thread(target=play_wav_file, args=(test_file,))
                 playback_thread.start()
+                time.sleep(CALIBRATED_LEAD_S)
                 record_audio(serial_mgr, output_file=None, playback=False, label=label)
                 playback_thread.join()
             elif command == "a":
                 auto_cycle(serial_mgr)
+            elif command == "k":
+                calibrate_recording_delays(serial_mgr)
             elif command == "q":
                 print("Exiting...")
                 break
@@ -606,8 +920,17 @@ def main():
         default=None,
         help="Folder containing bird/ and no_bird/ test wavs (default: ./input next to this script)",
     )
+    parser.add_argument(
+        "--retries",
+        type=int,
+        default=3,
+        help="Number of serial reconnection retries when no response (default: 3)",
+    )
 
     args = parser.parse_args()
+
+    global SERIAL_MAX_RETRIES
+    SERIAL_MAX_RETRIES = max(0, int(args.retries))
 
     if args.list_ports:
         if list_ports is None:
