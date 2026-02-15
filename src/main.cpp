@@ -7,7 +7,7 @@
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
-#include <Zuiderpark_combined_data_inferencing.h>
+#include <Bird_Detector_ESP32_inferencing.h>
 
 // Choose one mode:
 //#define CLASSIFIER_MODE// enable to have continous classification in regular serial monitor
