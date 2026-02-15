@@ -28,7 +28,7 @@ This bird detector was developed as part of the sound art installation **Chorusi
 https://matteomarangoni.com/Chorusing-Symbionts-page
 
 In this project, artificial creatures generate music in public parks in response to each other and the environment. 
-One project goal is to enable these artificial creatrures to detect bird vocalisations and respond through conflict-avoidant behaviours.
+One project goal is to enable these artificial creatures to detect bird vocalisations and respond through conflict-avoidant behaviours.
 
 Project constraints require:
 
@@ -116,7 +116,7 @@ Collection typically runs for 4–8 weeks per exhibition site.
 Raw dataset format:
 
 - Bird: 3 sec, 16bit, 48kHz WAV
-- Non-bird: 15 sec, 416bit, 48kHz WAV
+- Non-bird: 15 sec, 16bit, 48kHz WAV
 
 ---
 
@@ -141,9 +141,6 @@ Target output:
 - 16 kHz, 16bit
 - Clean bird vs noise folders
 - Approximately balanced classes
-
-Python dependencies include:
-
 
 ---
 
