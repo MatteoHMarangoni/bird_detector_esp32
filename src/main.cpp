@@ -10,10 +10,10 @@
 #include <Bird_Detector_ESP32_inferencing.h>
 
 // Choose one mode:
-//#define CLASSIFIER_MODE// enable to have continous classification in regular serial monitor
-#define COMMUNICATION_MODE // enable to stream audio and classifications to host via a python file
+#define CLASSIFIER_MODE// enable to have continous classification in regular serial monitor
+//#define COMMUNICATION_MODE // enable to stream audio and classifications to host via a python file
 
-//#define LED_PIN 15 // If defined an led will turned on for ewhen the inference returns a  positive classification for visual feedback.
+#define LED_PIN 15 // led will turned on for ewhen the inference returns a  positive classification for visual feedback.
 
 // --- Configuration constants ---
 #define SAMPLE_RATE 16000        // 16 kHz
