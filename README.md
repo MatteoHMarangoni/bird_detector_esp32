@@ -185,7 +185,10 @@ Deployment steps:
 
 ## Measuring Accuracy in Real Conditions
 
-Edge Impulse test accuracy does not equal field performance.
+Edge Impulse test accuracy does not equal field performance. 
+Edge Impulse reports 95% accuracy and 4 ms latency. 
+In deployment latency is reported at approx 50 ms, with 82% classificaion accuracy using the custom mic electronics and 64% with the MEMS mic. 
+Deployment measurement method might also be sub-optimal. 
 
 A hardware-in-the-loop evaluation system is included:
 
