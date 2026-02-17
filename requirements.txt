@@ -10,6 +10,5 @@ pyserial==3.5
 pygame==2.5.2
 
 # speech filtering stack
-faster-whisper
 silero-vad
 torch
