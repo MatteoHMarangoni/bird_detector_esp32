@@ -18,7 +18,8 @@ The system:
 
 The classifier is trained on a custom ecoacoustic dataset and deployed using **Edge Impulse**.
 
-A complete step-by-step DIY guide (hardware, dataset preparation, training, deployment, evaluation) will be added here soon.
+A complete step-by-step DIY guide is included here:  
+[DIY Step-by-Step Guide](manual/guide.md)
 
 ---
 
@@ -159,23 +160,21 @@ Free Edge Impulse account is sufficient.
 
 Hardware options:
 
-### Option A: MEMS (INMP441)
+Option A: MEMS (INMP441)
 - Simple wiring
 - Lower performance
 
-### Option B: Custom Board (ES8388 + electret mic)
+Option B: Custom Board (ES8388 + electret mic)
 - Higher gain 
 - Better distant detection
 - Improved real-world accuracy
 
 Firmware is built using:
-
 - PlatformIO
 - Espressif 32 platform
 - WEMOS LOLIN S3 PRO board profile
 
 Deployment steps:
-
 1. Export model from Edge Impulse as Arduino Library (EON, int8)
 2. Place library folder in `/lib`
 3. Include the generated header in `main.cpp`
@@ -258,18 +257,4 @@ Funding:
 - Creative Industries fund NL  
 - Performing Arts Fund NL  
 - Municipality of The Hague
-
-
-## Documentation
-
-A complete DIY guide covering:
-
-- Hardware schematics
-- Data collection setup
-- Python data processing scripts
-- Model training configuration
-- Deployment instructions
-- Evaluation methodology
-
-will be added soon.
-
+- Amarte Fonds
