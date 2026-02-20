@@ -19,7 +19,6 @@ is trained and deployed using the Edge Impulse platform.
 
 This guide presents a full pipeline, which is split in the following
 sections:
-
 - Data collection
 - Data preparation
 - Model training
@@ -63,12 +62,11 @@ combination with a dedicated audio codec, which gives better results.
 
 ## Context: Chorusing Symbionts project
 
-![](media/image8.jpg){width="6.267716535433071in"
-height="4.666666666666667in"}
+<img src="media/image8.jpg" width="602" height="448">
 
 The bird detector described in this guide has been developed as part of
-the project [[Chorusing
-Symbionts]{.underline}](https://matteomarangoni.com/Chorusing-Symbionts).
+the project [Chorusing
+Symbionts](https://matteomarangoni.com/Chorusing-Symbionts).
 This project is a sound art installation designed for public parks and
 gardens. In this project a group of artificial creatures generate music
 in real time in response to each other and the environment. One of the
@@ -88,7 +86,7 @@ classifier with the following characteristics:
 - The classifier needs to run on an esp32 microcontroller using Arduino
   code, for integration with existing sound generation and behaviours
   developed in the previous project
-  [[Komorebi]{.underline}](https://matteomarangoni.com/Komorebi-page%5D)
+  [Komorebi](https://matteomarangoni.com/Komorebi-page)
 
 - The classifier must have low power requirements, it needs to run on a
   small battery pack and a limited photovoltaic power source
@@ -110,7 +108,7 @@ evolving rapidly, therefore the information in this guide might be
 outdated.
 
 A commonly used classifier is
-[[BirdNET]{.underline}](https://birdnet.cornell.edu/). This classifier
+[BirdNET](https://birdnet.cornell.edu/). This classifier
 is trained to recognise over 6000 individual species, which is beyond
 the requirements of this project.
 
@@ -121,11 +119,11 @@ is then sent for analysis to a more powerful remote server. This
 approach is ruled out by the project requirements, since computation
 needs to be entirely on board.
 
-An [[embedded
-version]{.underline}](https://github.com/birdnet-team/BirdNET-Tiny-Forge)
+An [embedded
+version](https://github.com/birdnet-team/BirdNET-Tiny-Forge)
 of BirdNET is still in early development and not useful yet for the
 current application.
-[[BirdNET-PI]{.underline}](https://github.com/mcguirepr89/BirdNET-Pi) is
+[BirdNET-PI](https://github.com/mcguirepr89/BirdNET-Pi) is
 as close as a currently available solution comes, but it requires a
 Raspberry Pi, which in terms of energy budget and purchase cost is an
 order of magnitude higher compared to the ESP32.
@@ -133,10 +131,10 @@ order of magnitude higher compared to the ESP32.
 Additionally, BirdNET works with 3 second chunks, which introduces an
 amount of latency which is not desirable for a musical application.
 
-Several research papers, such as [[Tiny
-Chirp]{.underline}](https://arxiv.org/abs/2407.21453) or the [[BioDCASE
+Several research papers, such as [Tiny
+Chirp](https://arxiv.org/abs/2407.21453) or the [BioDCASE
 2025 challenge 3
-results]{.underline}](https://biodcase.github.io/challenge2025/task3-results),
+results](https://biodcase.github.io/challenge2025/task3-results),
 present low power and low latency bird audio classifiers with technical
 specifications compatible with project requirements, but these typically
 focus on recognising a single bird species. A further challenge is that
@@ -148,10 +146,10 @@ collection or model deployment which are covered in this guide.
 ## Repo
 
 Github link
-[[https://github.com/MatteoHMarangoni/bird_detector_esp32]{.underline}](https://github.com/MatteoHMarangoni/bird_detector_esp32)
+[https://github.com/MatteoHMarangoni/bird_detector_esp32](https://github.com/MatteoHMarangoni/bird_detector_esp32)
 
 Edge Impulse project
-[[https://studio.edgeimpulse.com/public/806211/live]{.underline}](https://studio.edgeimpulse.com/public/806211/live)
+[https://studio.edgeimpulse.com/public/806211/live](https://studio.edgeimpulse.com/public/806211/live)
 
 ## Prerequisites
 
@@ -160,67 +158,67 @@ sections.
 
 ### Data Collection 
 
-[[Raspberry Pi
-4B]{.underline}](https://www.raspberrypi.com/products/raspberry-pi-4-model-b/) +
+[Raspberry Pi
+4B](https://www.raspberrypi.com/products/raspberry-pi-4-model-b/) +
 SD card, recommended 64GB or more, and a suitable power supply
 
-[[Clippy EM272Z1 Mono
-Microphone]{.underline}](https://micbooster.com/product/clippy-em272-microphone/?v=1a13105b7e4e) +
-[[wind
-jammer]{.underline}](https://micbooster.com/product/puffer-urchin-clippy-windshield/?attribute_pa_colour=black&v=1a13105b7e4e)
+[Clippy EM272Z1 Mono
+Microphone](https://micbooster.com/product/clippy-em272-microphone/?v=1a13105b7e4e) +
+[wind
+jammer](https://micbooster.com/product/puffer-urchin-clippy-windshield/?attribute_pa_colour=black&v=1a13105b7e4e)
 
-[[Rode AI Micro]{.underline}](https://rode.com/en-nl/products/ai-micro)
+[Rode AI Micro](https://rode.com/en-nl/products/ai-micro)
 audio interface
 
-[[BirdNET-Pi]{.underline}](https://github.com/mcguirepr89/BirdNET-Pi)
+[BirdNET-Pi](https://github.com/mcguirepr89/BirdNET-Pi)
 installed on the Raspberry Pi
 
 ### Data Preparation
 
-[[BirdNET
-Analyser]{.underline}](https://github.com/birdnet-team/BirdNET-Analyzer) +
+[BirdNET
+Analyser](https://github.com/birdnet-team/BirdNET-Analyzer) +
 dependencies
 
-[[Silero VAD]{.underline}](https://github.com/snakers4/silero-vad) for
+[Silero VAD](https://github.com/snakers4/silero-vad) for
 removal of human speech for privacy protection
 
 Dependencies for running the data preparation scripts:
-- python = \"\^3.11\"
-- numpy = \"\^2.2.6\"
-- scipy = \"\^1.15.3\"
-- soundfile = \"\^0.13.1\"
-- sounddevice = \"\^0.5.2\"
-- librosa = \"\^0.11.0\"
-- python-osc = \"\^1.9.3\"
-- tqdm = \"\^4.67.1\"
+- python = "^3.11"
+- numpy = "^2.2.6"
+- scipy = "^1.15.3"
+- soundfile = "^0.13.1"
+- sounddevice = "^0.5.2"
+- librosa = "^0.11.0"
+- python-osc = "^1.9.3"
+- tqdm = "^4.67.1"
 - torch
 
 ### Model training
 
-[[Edge Impulse]{.underline}](https://edgeimpulse.com/) free account is
+[Edge Impulse](https://edgeimpulse.com/) free account is
 sufficient
 
 ### Model deployment
 
-[[ESP32 S3
-PRO]{.underline}](https://www.wemos.cc/en/latest/s3/s3_pro.html) as
+[ESP32 S3
+PRO](https://www.wemos.cc/en/latest/s3/s3_pro.html) as
 microcontroller (other ESP32 boards should also work, but might require
 some adjustments to the code and hardware interfacing).
 
-[[INMP441 MEMS microphone breakout board]{.underline}](http://l)
+[INMP441 MEMS microphone breakout board](https://invensense.tdk.com/wp-content/uploads/2015/02/INMP441.pdf)
 
 This microphone can be connected to the MCU simply with a breadboard and
 a few jumper wires
 
-We have made our own board using the [[ES8388
-Codec]{.underline}](http://www.everest-semi.com/pdf/ES8388%20DS.pdf) and
-a CMC-4015-25T [[electret
-microphone]{.underline}](http://mouser.com/ProductDetail/Same-Sky/CMC-4015-25T?qs=48I1WSKJTybY3H5TKh6cjA%3D%3D&countryCode=DE&currencyCode=EUR).
+We have made our own board using the [ES8388
+Codec](http://www.everest-semi.com/pdf/ES8388%20DS.pdf) and
+a CMC-4015-25T [electret
+microphone](http://mouser.com/ProductDetail/Same-Sky/CMC-4015-25T?qs=48I1WSKJTybY3H5TKh6cjA%3D%3D&countryCode=DE&currencyCode=EUR).
 In the repo you can find the
-[[schematic]{.underline}](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/electronics/custom_mic_schematic.png).
+[schematic](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/electronics/custom_mic_schematic.png).
 
-[[PlatformIO]{.underline}](https://platformio.org/) in [[Visual Studio
-Code]{.underline}](https://code.visualstudio.com/) for code editing and
+[PlatformIO](https://platformio.org/) in [Visual Studio
+Code](https://code.visualstudio.com/) for code editing and
 firmware flashing, with "Espressif 32" platform and "WEMOS LOLIN S3 PRO"
 board installed.
 
@@ -252,14 +250,14 @@ birds are not detected.
 
 ### Hardware setup
 
-A [[Raspberry Pi
-4B]{.underline}](https://www.raspberrypi.com/products/raspberry-pi-4-model-b/)
-with a SD card and a suitable power supply is connected to a [[Rode AI
-Micro]{.underline}](https://rode.com/en-nl/products/ai-micro) audio
-interface which receives a signal from a [[Clippy EM272Z1 Mono
-Microphone]{.underline}](https://micbooster.com/product/clippy-em272-microphone/?v=1a13105b7e4e)
-protected by a [[wind
-jammer]{.underline}](https://micbooster.com/product/puffer-urchin-clippy-windshield/?attribute_pa_colour=black&v=1a13105b7e4e).
+A [Raspberry Pi
+4B](https://www.raspberrypi.com/products/raspberry-pi-4-model-b/)
+with a SD card and a suitable power supply is connected to a [Rode AI
+Micro](https://rode.com/en-nl/products/ai-micro) audio
+interface which receives a signal from a [Clippy EM272Z1 Mono
+Microphone](https://micbooster.com/product/clippy-em272-microphone/?v=1a13105b7e4e)
+protected by a [wind
+jammer](https://micbooster.com/product/puffer-urchin-clippy-windshield/?attribute_pa_colour=black&v=1a13105b7e4e).
 A network cable is used to connect the Raspberry Pi to a laptop to
 access it remotely via ssh in terminal and FTP via an FTP client. 
 
@@ -267,17 +265,16 @@ access it remotely via ssh in terminal and FTP via an FTP client.
 
 Follow the instructions on:
 
-[[https://github.com/mcguirepr89/BirdNET-Pi/wiki/Installation-Guide]{.underline}](https://github.com/mcguirepr89/BirdNET-Pi/wiki/Installation-Guide)
+[https://github.com/mcguirepr89/BirdNET-Pi/wiki/Installation-Guide](https://github.com/mcguirepr89/BirdNET-Pi/wiki/Installation-Guide)
 
-![](media/image1.png){width="6.267716535433071in"
-height="4.638888888888889in"}
+<img src="media/image1.png" width="602" height="445">
 
 Important: remember to install the correct OS as indicated by BirdnetPi,
 the latest version might not be compatible
 
 Once you have BirdNET-Pi installed, connect to it via network cable and
 log in via the web interface accessible from a web browser at
-[[http://birdnetpi.local/]{.underline}](http://birdnetpi.local/).
+[http://birdnetpi.local/](http://birdnetpi.local/).
 
 Under tools: settings, set the date and time, local coordinates and
 preferred confidence settings for the detections. Check that the
@@ -289,7 +286,7 @@ vocalisations.
 ### Custom script
 
 In the repo under "data_collection_script" you can find
-[[custom_script_birdnet_pi.py]{.underline}](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/data_collection_script/)
+[custom_script_birdnet_pi.py](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/data_collection_script/custom_script_birdnet_pi.py)
 
 This script runs in parallel to birdNET and saves samples of
 environmental sound when there are no bird detections, in addition to
@@ -297,15 +294,15 @@ saving bird samples when there are detections.
 
 You can access the data on the Raspberry-Pi via FTP by connecting to it
 via network cable and using an FTP client like
-[[Cyberduck]{.underline}](https://cyberduck.io/). You can find the local
+[Cyberduck](https://cyberduck.io/). You can find the local
 network address of the Raspberry-Pi via Birdnet-Pi's web interface under
 tools: system info: viewer: LAN IP.
 
 Copy the script to your Raspberry-Pi, placing it in the folder
 BirdNET-Pi/scripts.
 
-Then [[set the script to run on
-boot]{.underline}](https://www.instructables.com/Raspberry-Pi-Launch-Python-script-on-startup/).
+Then [set the script to run on
+boot](https://www.instructables.com/Raspberry-Pi-Launch-Python-script-on-startup/).
 
 Important: in the script you need to adjust lines 695 and 696 to match
 the folder structure on your own Raspberry Pi.
@@ -356,11 +353,11 @@ contains private speech.
 The custom script saves the data in two folders: bird / nonbird, each
 used to train one category in the classifier
 
-\- bird files are 3 sec long, 48khz, with the name being the date, time
+- bird files are 3 sec long, 48khz, with the name being the date, time
 and the predicted species, e.g:
 2025-08-05-16/13/01_6.0_9.0_bird_Eurasian_Magpie.wav
 
-\- non-bird files are 15 sec long, 48khz, with the name being the date,
+- non-bird files are 15 sec long, 48khz, with the name being the date,
 time and then nonbird, e.g:
 2025-08-05-13/54/54_nonbird.wav
 
@@ -403,8 +400,7 @@ traditional approach of reviewing individual audio samples by ear.
 
 ### Reviewing the raw data: challenges and solutions
 
-![](media/image3.jpg){width="6.651042213473316in"
-height="2.662626859142607in"}
+<img src="media/image3.jpg" width="638" height="256">
 
 When reviewing the raw data, we found several challenges, which have
 been addressed in the dataset preparation.
@@ -495,9 +491,9 @@ Install Virtual Studio Code and the PlatformIO extension.
 
 Download the project repository and open it in PlatformIO
 
-[[https://github.com/MatteoHMarangoni/bird_detector_esp32]{.underline}](https://github.com/MatteoHMarangoni/bird_detector_esp32)
+[https://github.com/MatteoHMarangoni/bird_detector_esp32](https://github.com/MatteoHMarangoni/bird_detector_esp32)
 
-In terminal install python 3.11 with \> brew install python@3.11
+In terminal install python 3.11 with > brew install python@3.11
 
 In VS code go to view: command palette: Python: Create Environment:
 Venv.
@@ -514,7 +510,7 @@ This should activate the virtual environment automatically, Verify that
 the prompt starts with (.venv).
 
 In PlatformIO file explorer within the project repo, in the folder
-dagaset_preparation_scripts you can now run python scripts by selecting
+dataset_preparation_scripts you can now run python scripts by selecting
 them and clicking the "run python script" button above the code editor.
 
 The scripts will process all data contained in the
@@ -560,10 +556,10 @@ Species in the published curated dataset set are:
 
 The first thing we want to do is remove the silences from the 3sec bird
 samples, so we segment the files into 1 sec chunks and remove the ones
-that don\'t contain bird audio.
+that don't contain bird audio.
 
-BirdNET Analyser doesn\'t work as well with 1 sec samples, so we have to
-lower the confidence level substantially so we don\'t discard too much
+BirdNET Analyser doesn't work as well with 1 sec samples, so we have to
+lower the confidence level substantially so we don't discard too much
 useful bird data. The problem with this is that when we set a lower
 confidence threshold, species are more likely to be mislabelled. This is
 not a big problem as we are concerned with detecting birds generally and
@@ -574,7 +570,7 @@ the species label of the original detection present in the 3 second
 chunk, which is more likely to be accurate.
 
 We first run the bird data through the script
-"[[screen_sort_bird.py]{.underline}](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/dataset_preparation_scripts/screen_sort_bird.py)".
+"[screen_sort_bird.py](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/dataset_preparation_scripts/screen_sort_bird.py)".
 
 Don't forget to change the longitude and latitude of the location you
 recorded the data in the script. This is used for accurate inference by
@@ -592,7 +588,7 @@ Filenames of output from script:\
   inference)'-'previous filename'
 
 Optionally pass the resulting data through the script
-"[[remove_birds_by_name.py]{.underline}](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/dataset_preparation_scripts/screen_sort_bird.py)"
+"[remove_birds_by_name.py](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/dataset_preparation_scripts/remove_birds_by_name.py)"
 
 This compares the two bird species inferences, the original one from
 BirdNet during the data collection and the new bird species from the 1s
@@ -611,34 +607,34 @@ How much data do we have for each target species?
 Here is a table for the bird data gathered for the project in 2025 at
 different locations (in mb).
 
-  **Bird**                    **Zuiderpark**   **Marres**   **Bronkhorst**   **Amstelpark**   **Zuidwal**   **Combined**
-  --------------------------- ---------------- ------------ ---------------- ---------------- ------------- --------------
-  Common Chiffchaff           30               32           805              3540             \-            4407
-  Egyptian Goose              925              \-           \-               \-               \-            925
-  Rose Ringed Parakeet        810              \-           \-               20               26            856
-  Common Chaffinch            \-               173.9        480.2            1.2              5.9           661.2
-  Eurasian Blackbird          1.9              193.4        81.3             347.4            \-            624
-  Eurasian Coot               343              \-           146              1                4             494
-  Eurasian Magpie             247              102.3        30               34               44            457.3
-  Eurasian Wren               134              \-           125              171              \-            430
-  Eurasian Blackcap           \-               192.9        82.1             38.9             \-            313.9
-  Pigeon & Dove               62               185.2        39               19               \-            305.2
-  European robin              28               192.1        11               48               4             283.1
-  Mallard                     219              \-           26               1                \-            246
-  Eurasian Jackdaw            79               \-           41               6                102           228
-  Great Spotted Woodpecker    71               96.5         8.9              15.1             \-            191.5
-  Target amount               173              173          173              173              173           173
-  Carrion Crow                56               11.6         8                78               1             154.6
-  Short Toed Treecreeper      59               7.9          20               \-               3.2           90.1
-  Eurasian Jay                79               \-           2                \-               \-            81
-  Gadwall                     72               \-           \-               1                \-            73
-  Great Tit                   1.3              43.5         14.9             1.4              7.5           68.6
-  Seagulls (combined)         4.1              \-           \-               1                63            68.1
-  Eurasian Green Woodpecker   6.2              26.5         12.3             9                \-            54
-  Grey Heron                  47               \-           2                4                \-            53
-  Common Kingfisher           47               \-           5                \-               \-            52
-  Canada Goose                43               \-           \-               \-               \-            43
-  Eurasian Bluetit            10               \-           20               2                12            44
+| **Bird** | **Zuiderpark** | **Marres** | **Bronkhorst** | **Amstelpark** | **Zuidwal** | **Combined** |
+|---|---:|---:|---:|---:|---:|---:|
+| Common Chiffchaff | 30 | 32 | 805 | 3540 | - | 4407 |
+| Egyptian Goose | 925 | - | - | - | - | 925 |
+| Rose Ringed Parakeet | 810 | - | - | 20 | 26 | 856 |
+| Common Chaffinch | - | 173.9 | 480.2 | 1.2 | 5.9 | 661.2 |
+| Eurasian Blackbird | 1.9 | 193.4 | 81.3 | 347.4 | - | 624 |
+| Eurasian Coot | 343 | - | 146 | 1 | 4 | 494 |
+| Eurasian Magpie | 247 | 102.3 | 30 | 34 | 44 | 457.3 |
+| Eurasian Wren | 134 | - | 125 | 171 | - | 430 |
+| Eurasian Blackcap | - | 192.9 | 82.1 | 38.9 | - | 313.9 |
+| Pigeon & Dove | 62 | 185.2 | 39 | 19 | - | 305.2 |
+| European robin | 28 | 192.1 | 11 | 48 | 4 | 283.1 |
+| Mallard | 219 | - | 26 | 1 | - | 246 |
+| Eurasian Jackdaw | 79 | - | 41 | 6 | 102 | 228 |
+| Great Spotted Woodpecker | 71 | 96.5 | 8.9 | 15.1 | - | 191.5 |
+| **Target amount** | 173 | 173 | 173 | 173 | 173 | 173 |
+| Carrion Crow | 56 | 11.6 | 8 | 78 | 1 | 154.6 |
+| Short Toed Treecreeper | 59 | 7.9 | 20 | - | 3.2 | 90.1 |
+| Eurasian Jay | 79 | - | 2 | - | - | 81 |
+| Gadwall | 72 | - | - | 1 | - | 73 |
+| Great Tit | 1.3 | 43.5 | 14.9 | 1.4 | 7.5 | 68.6 |
+| Seagulls (combined) | 4.1 | - | - | 1 | 63 | 68.1 |
+| Eurasian Green Woodpecker | 6.2 | 26.5 | 12.3 | 9 | - | 54 |
+| Grey Heron | 47 | - | 2 | 4 | - | 53 |
+| Common Kingfisher | 47 | - | 5 | - | - | 52 |
+| Canada Goose | 43 | - | - | - | - | 43 |
+| Eurasian Bluetit | 10 | - | 20 | 2 | 12 | 44 |
 
 When we have more data than needed for the target location, we discard
 the lower quality data (lower confidence samples). If there are
@@ -650,20 +646,20 @@ although it was below the target amount.
 
 #### Downsample bird data to 16khz
 
-\- use
-[[downsample_dataset.py]{.underline}](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/dataset_preparation_scripts/downsample_dataset.py)
+- use
+[downsample_dataset.py](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/dataset_preparation_scripts/downsample_dataset.py)
 
 ### Preparing the non-bird (noise) data
 
 Goal:
 
-\- purge bird audio from the non-bird data
-\- discard very soft recordings
-\- format for training to 1 second 16khz
-\- extract a total of around 4 Gb (similar to total bird data),
+- purge bird audio from the non-bird data
+- discard very soft recordings
+- format for training to 1 second 16khz
+- extract a total of around 4 Gb (similar to total bird data),
 
 To remove misclassified audio from this data run
-[[purge_birds_from_nonbirds.py]{.underline}](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/dataset_preparation_scripts/purge_birds_from_nonbirds.py)
+[purge_birds_from_nonbirds.py](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/dataset_preparation_scripts/purge_birds_from_nonbirds.py)
 
 We run a script that does inference with a low confidence level (0.1 or
 lower, depending on the amount of non-bird data present), so it is
@@ -671,7 +667,7 @@ aggressively filtering out anything that might be a bird.
 
 Optionally: if there is too much noise data, filter by loudness
 threshold with
-[[split_by_loudness.py]{.underline}](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/dataset_preparation_scripts/)
+[split_by_loudness.py](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/dataset_preparation_scripts/split_by_loudness.py)
 
 #### Manual review of the non bird data
 
@@ -699,16 +695,16 @@ categories, including:
 #### Final prep non-bird data
 
 - Segment the 3s chunks into 1s chunks with
-  [[split_into_1s_chunks.py]{.underline}](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/dataset_preparation_scripts/)
+  [split_into_1s_chunks.py](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/dataset_preparation_scripts/split_into_1s_chunks.py)
 
 - downsample from 48khz to 16khz with
-  [[downsample_dataset.py]{.underline}](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/dataset_preparation_scripts/downsample_dataset.py)
+  [downsample_dataset.py](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/dataset_preparation_scripts/downsample_dataset.py)
 
 ### Removing human voices (privacy)
 
-\- if data is to be published: remove (most) intelligible human speech
+- if data is to be published: remove (most) intelligible human speech
 from data with
-[[remove_human_speech.py]{.underline}](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/dataset_preparation_scripts/remove_human_speech.py)
+[remove_human_speech.py](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/dataset_preparation_scripts/remove_human_speech.py)
 
 Note: Review output and adjust settings if intelligible speech that
 could relate to identifiable individuals is present. Under Dutch law
@@ -724,40 +720,36 @@ less privacy-sensitive.
 For training we use Edge Impulse, a platform focusing on Machine
 Learning in IoT applications.
 
-Setup a free account on [[Edge
-Impulse]{.underline}](https://www.edgeimpulse.com) and clone the
+Setup a free account on [Edge
+Impulse](https://www.edgeimpulse.com) and clone the
 project:
 
-[[https://studio.edgeimpulse.com/public/806211/live]{.underline}](https://studio.edgeimpulse.com/public/806211/live)
+[https://studio.edgeimpulse.com/public/806211/live](https://studio.edgeimpulse.com/public/806211/live)
 
-The platform provides a [[tutorial on training audio
-classifiers]{.underline}](https://docs.edgeimpulse.com/tutorials/end-to-end/sound-recognition).
+The platform provides a [tutorial on training audio
+classifiers](https://docs.edgeimpulse.com/tutorials/end-to-end/sound-recognition).
 
 In data acquisition upload the two data folders as "birds" and as
 "noise".
 
 Let the data be split automatically in train and test set.
 
-![](media/image2.jpg){width="6.267716535433071in"
-height="1.6388888888888888in"}
+<img src="media/image2.jpg" width="602" height="157">
 
 In create impulse select the parameters for the input data, feature
 extraction (MFCC) and learning block (classifier).
 
-![](media/image4.jpg){width="6.267716535433071in"
-height="2.6805555555555554in"}
+<img src="media/image4.jpg" width="602" height="257">
 
 Then proceed to MFCC extraction
 
-![](media/image5.jpg){width="6.267716535433071in"
-height="5.416666666666667in"}
+<img src="media/image5.jpg" width="602" height="520">
 
 And finally model training
 
-![](media/image7.jpg){width="6.267716535433071in"
-height="8.694444444444445in"}
+<img src="media/image7.jpg" width="602" height="835">
 
-## ![](media/image6.png){width="6.267716535433071in" height="7.861111111111111in"}
+## <img src="media/image6.png" width="602" height="755">
 
 When working with a new dataset, it might be useful to use the provided
 Ion Tuner feature to sweep the parameter space and optimise setting for
@@ -780,10 +772,10 @@ input. This repo provides the code and two hardware solutions.
 
 ### Hardware 
 
-We used an [[ESP32 S3 with 8MB
-psram]{.underline}](https://www.espressif.com/en/products/socs/esp32),
-the [[Wemos Lolin S3
-Pro]{.underline}](https://www.wemos.cc/en/latest/s3/s3_pro.html)
+We used an [ESP32 S3 with 8MB
+psram](https://www.espressif.com/en/products/socs/esp32),
+the [Wemos Lolin S3
+Pro](https://www.wemos.cc/en/latest/s3/s3_pro.html)
 provides a suitable development board.
 
 The MEMS microphone [INMP441](https://invensense.tdk.com/wp-content/uploads/2015/02/INMP441.pdf)  
@@ -812,16 +804,15 @@ When using the INMP441 breakout board, wire it as follows:
 You may connect an LED to indicate a positive detection:
 GPIO15 → LED → 100Ω resistor → GND
 
-![](media/image9.jpg){width="6.267716535433071in"
-height="4.611111111111111in"}
+<img src="media/image9.jpg" width="602" height="443">
 
 ### Code installation and use
 
 Depending on your hardware, download from the project repo the branch
-for the [[custom mic
-circuit]{.underline}](https://github.com/MatteoHMarangoni/bird_detector_esp32/tree/main)
-or [[MEMS
-mic]{.underline}](https://github.com/MatteoHMarangoni/bird_detector_esp32/tree/main).
+for the [custom mic
+circuit](https://github.com/MatteoHMarangoni/bird_detector_esp32/tree/main)
+or [MEMS
+mic](https://github.com/MatteoHMarangoni/bird_detector_esp32/tree/INMP441).
 
 If you have not yet installed the VSC, PlatformIO and the virtual
 environment to run python scripts, first follow the instructions at
@@ -831,8 +822,8 @@ Open the project in PlatformIO in VSC.
 
 In main.cpp, choose mode (uncomment one):
 
-- Classifier mode \> continuos classification via serial / LED
-- Communication mode \> allows use of custom script record and play
+- Classifier mode > continuos classification via serial / LED
+- Communication mode > allows use of custom script record and play
   samples to the local drive
 
 If set in classifier mode, simply upload to MCU and open the serial
@@ -840,7 +831,7 @@ monitor to see the inferences, or simply observe the LED (light on
 signals bird detected).
 
 If set in communication mode, run the script
-[[Serial_Audio.py]{.underline}](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/deployment_script/Serial_Audio.py)
+[Serial_Audio.py](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/deployment_script/Serial_Audio.py)
 
 This script allows to:
 
@@ -853,11 +844,11 @@ This script allows to:
 
 To add a different model trained on Edge Impulse, unzip the file we got
 after building the model in edge impulse. The resulting folder we have
-to place in the ["lib"]{.underline} folder in the project code.
+to place in the ["lib"] folder in the project code.
 
 In the main.cpp file in the project folder, we change the naming on line
 19:\
-#include \<Bird_Detector_ESP32_inferencing.h\>
+#include <Bird_Detector_ESP32_inferencing.h>
 - Change the name of the .h file to the exact name of the folder you
   just put in the lib folder
 
@@ -871,9 +862,9 @@ environmental conditions and hardware limitations.
 
 The device reported the following latency:
 
-Feature ext: 5.73 ms \| Inference: 48.60 ms
+Feature ext: 5.73 ms | Inference: 48.60 ms
 
-Current draw was measured witha USB amp meter at approx 150mA @ 3.3
+Current draw was measured with a USB amp meter at approx 150mA @ 3.3
 volt. for 1.05 seconds (including sampling time) = approx 0.044mAh per
 inference
 
@@ -891,11 +882,11 @@ inferences over the sound captured by the microphone, the inferences can
 then be compared to the original label to determine accuracy.
 
 With the firmware set to Communication Mode, we can use the
-[[Serial_Audio.py]{.underline}](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/deployment_script/Serial_Audio.py)
+[Serial_Audio.py](https://github.com/MatteoHMarangoni/bird_detector_esp32/blob/main/deployment_script/Serial_Audio.py)
 script to verify deployed inference accuracy.
 
 We need to add the files we want to use for testing to the project
-folder. We do this in the "[input"]{.underline} folder. In the folder
+folder. We do this in the "[input"] folder. In the folder
 there are two subfolders, bird and no_bird. We add bird recordings in
 the bird folder and non_bird / noise recordings in the no_bird folder.
 We aim for around 1h of total data (so 30 min for each category). We
@@ -918,7 +909,7 @@ After the offset is calibrated, we can type the letter 'a' to start the
 process. This will run the automatic evaluation script. It will cycle
 through the files in the input folder (remember to point the script to
 the test data). It will play a file from the input folder over your
-computer\'s speakers. While the computer is playing back the file, the
+computer's speakers. While the computer is playing back the file, the
 MCU will make a recording using the onboard microphone, run an inference
 on it. Then it will save it in the recordings folder on the computer.
 Files from the bird input folder will be saved in the recordings/bird
@@ -933,7 +924,7 @@ inferences. In the non-bird folder files named non-bird are correct
 inferences.
 
 We can also have a look at the confidence levels of the inference.
-0.000 - 0.500 means it\'s classified to be a non_bird, while confidence
+0.000 - 0.500 means it's classified to be a non_bird, while confidence
 0.500 - 1.000 means it is classified as a bird. (So if a file from the
 non_bird input is classified as 0.511-bird, this means its not very
 confident about it) .
